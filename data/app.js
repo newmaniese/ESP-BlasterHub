@@ -131,6 +131,23 @@ function refreshStoredList() {
   });
 }
 
+function importSavedFromFile(file) {
+  if (!file) return Promise.reject(new Error('Select a JSON file first.'));
+  return file.text()
+    .then(function (txt) {
+      var parsed = JSON.parse(txt);
+      if (!Array.isArray(parsed)) {
+        throw new Error('JSON must be an array of stored-code objects.');
+      }
+      return fetch('/saved/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      });
+    })
+    .then(function (r) { return r.json(); });
+}
+
 // ---------------------------------------------------------------------------
 // Update "Last received" section
 // ---------------------------------------------------------------------------
@@ -318,6 +335,27 @@ document.addEventListener('click', function (e) {
 // Event delegation: form submissions
 // ---------------------------------------------------------------------------
 document.addEventListener('submit', function (e) {
+  if (e.target.id === 'form-import-saved') {
+    e.preventDefault();
+    var input = document.getElementById('import-json-file');
+    var file = input && input.files ? input.files[0] : null;
+    importSavedFromFile(file)
+      .then(function (res) {
+        if (!res || !res.ok) {
+          throw new Error((res && res.error) ? res.error : 'Import failed.');
+        }
+        var msg = 'Imported ' + (res.imported || 0) + ', skipped ' + (res.skipped || 0);
+        addLog('Import: ' + msg, (res.skipped > 0) ? 'log-known-likely' : 'log-send');
+        showModal(msg);
+        refreshStoredList();
+        if (input) input.value = '';
+      })
+      .catch(function (err) {
+        addLog('Import failed: ' + (err && err.message ? err.message : 'unknown error'), 'log-failed');
+      });
+    return;
+  }
+
   if (!e.target.classList.contains('js-save-form')) return;
   e.preventDefault();
   var f = e.target;

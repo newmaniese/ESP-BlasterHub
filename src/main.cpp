@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ctype.h>
 #include <WiFi.h>
 #include <LittleFS.h>
 #include <ESPAsyncWebServer.h>
@@ -38,6 +39,14 @@ IrCapture history[HISTORY_SIZE];
 int historyLen = 0;
 
 Preferences savedCodes;
+
+bool isHexValue(const char *s) {
+  if (!s || !*s) return false;
+  for (const char *p = s; *p; ++p) {
+    if (!isxdigit((unsigned char)*p)) return false;
+  }
+  return true;
+}
 
 int getSavedCount() {
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
@@ -101,6 +110,110 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
+}
+
+// POST /saved/import — body JSON array of { "name", "protocol", "value", "bits" }.
+// Appends valid entries to NVS and skips invalid entries with a summary.
+void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+  String *acc = (String *)request->_tempObject;
+  if (acc == nullptr) {
+    acc = new String();
+    request->_tempObject = acc;
+  }
+  if (len) acc->concat((const char *)data, len);
+  if (index + len != total) return;
+
+  String body = *acc;
+  delete acc;
+  request->_tempObject = nullptr;
+
+  DynamicJsonDocument inputDoc((size_t)body.length() + 2048);
+  DeserializationError err = deserializeJson(inputDoc, body);
+  if (err) {
+    request->send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+    return;
+  }
+  if (!inputDoc.is<JsonArray>()) {
+    request->send(400, "application/json", "{\"ok\":false,\"error\":\"Expected JSON array\"}");
+    return;
+  }
+
+  JsonArray in = inputDoc.as<JsonArray>();
+  DynamicJsonDocument outDoc(2048);
+  outDoc["ok"] = true;
+  outDoc["imported"] = 0;
+  outDoc["skipped"] = 0;
+  JsonArray errors = outDoc.createNestedArray("errors");
+
+  savedCodes.begin(SAVED_CODES_NAMESPACE, false);
+  int n = savedCodes.getInt("n", 0);
+
+  const int maxErrors = 12;
+  for (size_t i = 0; i < in.size(); i++) {
+    JsonVariant v = in[i];
+    if (!v.is<JsonObject>()) {
+      outDoc["skipped"] = (int)outDoc["skipped"] + 1;
+      if ((int)errors.size() < maxErrors) {
+        JsonObject e = errors.createNestedObject();
+        e["index"] = (int)i;
+        e["reason"] = "Entry is not an object";
+      }
+      continue;
+    }
+
+    JsonObject src = v.as<JsonObject>();
+    const char *name = src["name"] | "";
+    const char *protocol = src["protocol"] | "";
+    const char *valueHex = src["value"] | "";
+    uint16_t bits = src["bits"] | 32;
+
+    const char *reason = nullptr;
+    if (!protocol || !*protocol) reason = "Missing protocol";
+    else if (!valueHex || !*valueHex) reason = "Missing value";
+    else if (!isHexValue(valueHex)) reason = "Value must be hex";
+    else if (bits < 1 || bits > 64) reason = "Bits out of range";
+
+    if (reason) {
+      outDoc["skipped"] = (int)outDoc["skipped"] + 1;
+      if ((int)errors.size() < maxErrors) {
+        JsonObject e = errors.createNestedObject();
+        e["index"] = (int)i;
+        e["reason"] = reason;
+      }
+      continue;
+    }
+
+    StaticJsonDocument<384> entry;
+    entry["name"] = name;
+    entry["protocol"] = protocol;
+    entry["value"] = valueHex;
+    entry["bits"] = bits;
+
+    char buf[SAVED_CODE_MAX];
+    size_t outLen = serializeJson(entry, buf, sizeof(buf));
+    if (outLen >= SAVED_CODE_MAX) {
+      outDoc["skipped"] = (int)outDoc["skipped"] + 1;
+      if ((int)errors.size() < maxErrors) {
+        JsonObject e = errors.createNestedObject();
+        e["index"] = (int)i;
+        e["reason"] = "Entry too large";
+      }
+      continue;
+    }
+
+    String key = String(n);
+    savedCodes.putString(key.c_str(), buf);
+    n++;
+    outDoc["imported"] = (int)outDoc["imported"] + 1;
+  }
+
+  savedCodes.putInt("n", n);
+  savedCodes.end();
+  outDoc["total"] = n;
+
+  String out;
+  serializeJson(outDoc, out);
+  request->send(200, "application/json", out);
 }
 
 // GET /save or POST with query params: save last code or specific code via query params
@@ -383,6 +496,7 @@ void setup() {
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
   server.on("/saved", HTTP_GET, handleSaved);
+  server.on("/saved/import", HTTP_POST, [](AsyncWebServerRequest *request) { /* body handled in onSavedImportBody */ }, nullptr, onSavedImportBody);
   server.on("/saved/delete", HTTP_POST, handleSavedDelete);
   server.on("/saved/rename", HTTP_POST, handleSavedRename);
   server.on("/dump", HTTP_GET, handleDump);

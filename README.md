@@ -10,6 +10,10 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 - **Activity log:** Real-time scrollable log of IR receives and sends. Incoming signals are color-coded: green for known stored commands, amber for likely matches, grey for unknown.
 - **Mobile-first UI:** Responsive layout optimized for phones (stored commands first, large buttons) with two-column grid on desktop. Frontend served from **LittleFS** as static HTML/CSS/JS; see [docs/web-interface.md](docs/web-interface.md).
 
+## Web interface preview
+
+![IR Blaster web UI screenshot](file:///Users/mnewman/.cursor/projects/Users-mnewman-Projects-irproject/assets/Screenshot_2026-02-15_at_13.59.39-13d454f9-c9b5-4799-bdf7-f2e526ba53c6.png)
+
 ## Quick start
 
 1. **Hardware**  

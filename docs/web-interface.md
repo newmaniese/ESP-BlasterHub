@@ -87,6 +87,9 @@ On **tablet / desktop** (≥640px) — two-column grid:
   - **Edit** — prompts for a new name and renames the saved item.
   - **Del** — asks for confirmation, then deletes. The list refreshes in place.
 - If no stored codes exist, shows: "None yet. Save codes from the form or from received signals."
+- Includes an **Import JSON** control for bulk loading a mapped-device `Stored Codes.json` file.
+  - Import behavior: **append** valid entries to existing saved codes.
+  - Validation behavior: invalid entries are **skipped** and reported in the import response summary.
 
 ### Last Received
 
@@ -153,6 +156,7 @@ All endpoints remain valid. WebSocket is optional; the UI uses it for live updat
 | `GET` | `/save?protocol=...&value=HEX&length=...&name=...` | Save a specific code by parameters. |
 | `POST` | `/save` | Save from JSON body: `{ "name", "protocol", "value", "bits" }`. |
 | `GET` | `/saved` | JSON array of all saved codes (index, name, protocol, value, bits). |
+| `POST` | `/saved/import` | Bulk import JSON array of saved-code objects (`name`, `protocol`, `value`, `bits`). Appends valid entries, skips invalid entries, returns `{ "ok", "imported", "skipped", "errors", "total" }`. |
 | `POST` | `/saved/delete?index=N` | Delete saved code at index `N`; shifts remaining. Returns `{ "ok", "remaining" }`. |
 | `POST` | `/saved/rename?index=N&name=NewName` | Rename saved code at index `N`. Returns `{ "ok", "index" }`. |
 | `GET` | `/dump` | Plain text dump for hardcoding (comments + NEC send lines). |
@@ -176,3 +180,18 @@ All endpoints remain valid. WebSocket is optional; the UI uses it for live updat
 - Send NEC: `http://<device-ip>/send?type=nec&data=FF827D&length=32`
 - List saved (JSON): `http://<device-ip>/saved`
 - Dump for code: `http://<device-ip>/dump`
+
+## Import example
+
+UI flow:
+- Open `http://<device-ip>/`
+- In **Stored Commands**, choose a `Stored Codes.json` file
+- Click **Import JSON**
+
+CLI example:
+
+```bash
+curl -sS -X POST "http://<device-ip>/saved/import" \
+  -H "Content-Type: application/json" \
+  --data-binary @Stored\ Codes.json
+```

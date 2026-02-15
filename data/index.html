@@ -27,6 +27,12 @@
   <!-- ====== Stored Commands (first on mobile) ====== -->
   <section class="panel panel-stored" id="section-stored">
     <h2>Stored Commands <span class="badge" id="saved-count-n">%INITIAL_SAVED_COUNT%</span></h2>
+    <form id="form-import-saved" class="import-form">
+      <label for="import-json-file">Stored Codes JSON</label>
+      <input id="import-json-file" type="file" accept="application/json,.json">
+      <button type="submit" class="btn btn-primary">Import JSON</button>
+    </form>
+    <p><em>Import appends valid entries and skips invalid ones.</em></p>
     <div id="saved-list">
       <p id="saved-empty"><em>Loading…</em></p>
     </div>
