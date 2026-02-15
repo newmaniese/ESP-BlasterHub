@@ -12,7 +12,7 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 
 ## Web interface preview
 
-![IR Blaster web UI screenshot](file:///Users/mnewman/.cursor/projects/Users-mnewman-Projects-irproject/assets/Screenshot_2026-02-15_at_13.59.39-13d454f9-c9b5-4799-bdf7-f2e526ba53c6.png)
+![IR Blaster web UI screenshot](docs/assets/web-ui-screenshot.png)
 
 ## Quick start
 
