@@ -1,0 +1,41 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/.browse.ccl*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+
+# Build & firmware
+*.o
+*.a
+*.elf
+*.bin
+*.map
+
+# Sensitive / secrets (never commit)
+src/secrets.h
+secrets.h
+*.local
+.env
+.env.*
+
+# IDE & OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Python (if you add scripts)
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+.venv/
+
+# Misc
+*.log
+.cache/

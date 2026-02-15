@@ -1,0 +1,156 @@
+[
+  {
+    "index": 0,
+    "name": "Off",
+    "protocol": "NEC",
+    "value": "00FF629D",
+    "bits": 32
+  },
+  {
+    "index": 1,
+    "name": "Purple",
+    "protocol": "NEC",
+    "value": "00FF7A85",
+    "bits": 32
+  },
+  {
+    "index": 2,
+    "name": "Green",
+    "protocol": "NEC",
+    "value": "00FF9867",
+    "bits": 32
+  },
+  {
+    "index": 3,
+    "name": "Rainbow",
+    "protocol": "NEC",
+    "value": "00FF22DD",
+    "bits": 32
+  },
+  {
+    "index": 4,
+    "name": "Blue",
+    "protocol": "NEC",
+    "value": "00FFB04F",
+    "bits": 32
+  },
+  {
+    "index": 5,
+    "name": "On",
+    "protocol": "NEC",
+    "value": "00FFA25D",
+    "bits": 32
+  },
+  {
+    "index": 6,
+    "name": "Flash",
+    "protocol": "NEC",
+    "value": "00FF02FD",
+    "bits": 32
+  },
+  {
+    "index": 7,
+    "name": "Teal",
+    "protocol": "NEC",
+    "value": "00FF18E7",
+    "bits": 32
+  },
+  {
+    "index": 8,
+    "name": "Red",
+    "protocol": "NEC",
+    "value": "00FF6897",
+    "bits": 32
+  },
+  {
+    "index": 9,
+    "name": "Orange",
+    "protocol": "NEC",
+    "value": "00FF30CF",
+    "bits": 32
+  },
+  {
+    "index": 10,
+    "name": "Sun",
+    "protocol": "NEC",
+    "value": "00FF10EF",
+    "bits": 32
+  },
+  {
+    "index": 11,
+    "name": "Yellow",
+    "protocol": "NEC",
+    "value": "00FF42BD",
+    "bits": 32
+  },
+  {
+    "index": 12,
+    "name": "Aqua",
+    "protocol": "NEC",
+    "value": "00FF4AB5",
+    "bits": 32
+  },
+  {
+    "index": 13,
+    "name": "Light Aqua",
+    "protocol": "NEC",
+    "value": "00FF38C7",
+    "bits": 32
+  },
+  {
+    "index": 14,
+    "name": "Sea Foam",
+    "protocol": "NEC",
+    "value": "FF18E7",
+    "bits": 32
+  },
+  {
+    "index": 15,
+    "name": "30M",
+    "protocol": "NEC",
+    "value": "00FFE21D",
+    "bits": 32
+  },
+  {
+    "index": 16,
+    "name": "60M",
+    "protocol": "NEC",
+    "value": "00FFC23D",
+    "bits": 32
+  },
+  {
+    "index": 17,
+    "name": "Brighter",
+    "protocol": "NEC",
+    "value": "00FFE01F",
+    "bits": 32
+  },
+  {
+    "index": 18,
+    "name": "Less Bright",
+    "protocol": "NEC",
+    "value": "00FFA857",
+    "bits": 32
+  },
+  {
+    "index": 19,
+    "name": "White",
+    "protocol": "NEC",
+    "value": "00FF906F",
+    "bits": 32
+  },
+  {
+    "index": 20,
+    "name": "Violet",
+    "protocol": "NEC",
+    "value": "00FF5AA5",
+    "bits": 32
+  },
+  {
+    "index": 21,
+    "name": "Bright Purple",
+    "protocol": "NEC",
+    "value": "00FF52AD",
+    "bits": 32
+  }
+]

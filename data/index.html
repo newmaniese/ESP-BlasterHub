@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ESP32-C3 IR Blaster</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<!-- Modal overlay for send confirmations -->
+<div id="modal-overlay"><div id="modal"><strong>Sent:</strong> <span id="modal-msg"></span></div></div>
+
+<!-- Header -->
+<header class="header">
+  <h1>IR Blaster</h1>
+  <p class="header-meta">
+    <span id="ws-status" class="ws-badge ws-disconnected">Disconnected</span>
+    <b>IP:</b> %DEVICE_IP%
+    &nbsp;<a href="/saved">JSON</a>
+    &nbsp;<a href="/dump" target="_blank">Dump</a>
+  </p>
+</header>
+
+<div class="wrap">
+
+  <!-- ====== Stored Commands (first on mobile) ====== -->
+  <section class="panel panel-stored" id="section-stored">
+    <h2>Stored Commands <span class="badge" id="saved-count-n">%INITIAL_SAVED_COUNT%</span></h2>
+    <div id="saved-list">
+      <p id="saved-empty"><em>Loading…</em></p>
+    </div>
+  </section>
+
+  <!-- ====== Last Received ====== -->
+  <section class="panel panel-last" id="section-last">
+    <h2>Last Received <span id="last-live" class="live-dot"></span></h2>
+    <pre id="last-human">Waiting for IR signal…</pre>
+    <div id="last-actions">
+      <em>Point remote and press a button.</em>
+    </div>
+    <details class="raw-details">
+      <summary>Raw</summary>
+      <pre id="last-raw"></pre>
+    </details>
+  </section>
+
+  <!-- ====== Store a Code (manual entry) ====== -->
+  <section class="panel panel-form" id="section-store">
+    <h2>Store a Code</h2>
+    <form id="form-save-manual" class="js-save-form" action="/save" method="get">
+      <div class="form-row">
+        <label for="f-name">Name</label>
+        <input id="f-name" type="text" name="name" placeholder="e.g. Power">
+      </div>
+      <div class="form-row">
+        <label for="f-proto">Protocol</label>
+        <select id="f-proto" name="protocol"><option value="NEC">NEC</option></select>
+      </div>
+      <div class="form-row">
+        <label for="f-value">Value (hex)</label>
+        <input id="f-value" type="text" name="value" placeholder="FF827D" pattern="[0-9A-Fa-f]+">
+      </div>
+      <div class="form-row">
+        <label for="f-bits">Bits</label>
+        <input id="f-bits" type="number" name="length" value="32" min="8" max="64">
+      </div>
+      <div class="form-row">
+        <button type="submit" class="btn btn-primary">Save Code</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ====== Send Log ====== -->
+  <section class="panel panel-log" id="section-log">
+    <h2>Activity Log</h2>
+    <div id="send-log">
+      <p class="log-empty"><em>No activity yet.</em></p>
+    </div>
+  </section>
+
+</div><!-- .wrap -->
+
+<script src="/app.js"></script>
+</body>
+</html>
