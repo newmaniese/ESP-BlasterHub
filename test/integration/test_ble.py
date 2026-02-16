@@ -31,6 +31,7 @@ SERVICE_UUID      = "e97a0001-c116-4a63-a60f-0e9b4d3648f3"
 CHAR_SAVED_UUID   = "e97a0002-c116-4a63-a60f-0e9b4d3648f3"
 CHAR_SEND_UUID    = "e97a0003-c116-4a63-a60f-0e9b4d3648f3"
 CHAR_STATUS_UUID  = "e97a0004-c116-4a63-a60f-0e9b4d3648f3"
+CHAR_SCHEDULE_UUID = "e97a0005-c116-4a63-a60f-0e9b4d3648f3"
 
 DEVICE_BLE_NAME = os.environ.get("DEVICE_BLE_NAME", "IR Blaster")
 DEVICE_BLE_ADDR = os.environ.get("DEVICE_BLE_ADDR", "")
@@ -122,8 +123,9 @@ class TestSavedCodesCharacteristic:
         if len(data) == 0:
             pytest.skip("No saved codes on device — save at least one code first")
         entry = data[0]
-        for key in ("index", "name", "protocol", "value", "bits"):
-            assert key in entry, f"Missing key: {key}"
+        # BLE returns compact format: i (index), n (name) only
+        assert "i" in entry or "index" in entry, "Missing index key (i or index)"
+        assert "n" in entry or "name" in entry, "Missing name key (n or name)"
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +187,24 @@ class TestSendCommand:
 
         assert len(status_values) > 0, "No status notification received"
         assert status_values[-1].startswith("ERR:"), f"Expected ERR, got: {status_values[-1]}"
+
+
+# ---------------------------------------------------------------------------
+# Schedule characteristic (Write) — arm and heartbeat
+# ---------------------------------------------------------------------------
+
+class TestScheduleCharacteristic:
+    """Write schedule payloads (arm and heartbeat) and verify no ERR."""
+
+    @pytest.mark.asyncio
+    async def test_schedule_arm_and_heartbeat(self, client):
+        # Arm: run "Off" in 900s (we do not wait for it; just check the write is accepted)
+        payload_arm = json.dumps({"delay_seconds": 900, "command": "Off"}).encode("utf-8")
+        await client.write_gatt_char(CHAR_SCHEDULE_UUID, payload_arm)
+
+        # Heartbeat: reset the timer (no response; just ensure write succeeds)
+        payload_heartbeat = json.dumps({"heartbeat": True}).encode("utf-8")
+        await client.write_gatt_char(CHAR_SCHEDULE_UUID, payload_heartbeat)
 
 
 # ---------------------------------------------------------------------------

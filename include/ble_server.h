@@ -6,14 +6,14 @@
 #define BLE_CHAR_SAVED_UUID      "e97a0002-c116-4a63-a60f-0e9b4d3648f3"
 #define BLE_CHAR_SEND_UUID       "e97a0003-c116-4a63-a60f-0e9b4d3648f3"
 #define BLE_CHAR_STATUS_UUID     "e97a0004-c116-4a63-a60f-0e9b4d3648f3"
+#define BLE_CHAR_SCHEDULE_UUID   "e97a0005-c116-4a63-a60f-0e9b4d3648f3"
 
 #define BLE_DEVICE_NAME          "IR Blaster"
-#define BLE_PASSKEY              123456   // shown on Serial during first pairing
+// Pairing: "Just Works" (no passkey). Set to 1 to require passkey entry (ESP_LE_AUTH_REQ_SC_MITM_BOND).
+#define BLE_USE_PASSKEY           0
+#define BLE_PASSKEY               123456  // used only when BLE_USE_PASSKEY is 1
 
-// Auto-send on connect and after disconnect timeout (Blaster Mac Client).
-#define BLE_CONNECT_SEND_INDEX    5                         // "On"
-#define BLE_TIMEOUT_SEND_INDEX    0                         // "Off"
-#define BLE_DISCONNECT_TIMEOUT_MS (15UL * 60UL * 1000UL)   // 15 minutes
+#define BLE_SCHEDULE_CMD_NAME_MAX 32   // max length of scheduled command name
 
 // Call from setup() after IR and NVS are ready.
 void setupBLE();

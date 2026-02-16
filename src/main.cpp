@@ -74,6 +74,54 @@ String getSavedCodesJson() {
   return out;
 }
 
+// Compact JSON for BLE only (index + name, short keys) to stay under 600-byte characteristic limit.
+static const size_t BLE_SAVED_CODES_MAX_LEN = 590;
+String getSavedCodesJsonCompact() {
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  String out = "[";
+  for (int i = 0; i < n; i++) {
+    String key = String(i);
+    String raw = savedCodes.getString(key.c_str(), "{}");
+    JsonDocument entry;
+    deserializeJson(entry, raw);
+    const char *name = entry["name"] | "";
+    if (out.length() > 1) out += ",";
+    out += "{\"i\":";
+    out += String(i);
+    out += ",\"n\":\"";
+    for (const char *p = name; *p; p++) {
+      if (*p == '"' || *p == '\\') out += '\\';
+      out += *p;
+    }
+    out += "\"}";
+    if (out.length() >= BLE_SAVED_CODES_MAX_LEN) break;
+  }
+  out += "]";
+  savedCodes.end();
+  return out;
+}
+
+// Find first saved code index whose name matches (case-insensitive). Returns -1 if not found.
+int getSavedCodeIndexByName(const char *name) {
+  if (!name || !*name) return -1;
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  for (int i = 0; i < n; i++) {
+    String key = String(i);
+    String raw = savedCodes.getString(key.c_str(), "{}");
+    JsonDocument entry;
+    if (deserializeJson(entry, raw)) continue;
+    const char *stored = entry["name"] | "";
+    if (strcasecmp(stored, name) == 0) {
+      savedCodes.end();
+      return i;
+    }
+  }
+  savedCodes.end();
+  return -1;
+}
+
 // Send a stored IR code by NVS index.  Shared by HTTP, WebSocket, and BLE.
 // Returns true on success; fills outName with the code's stored name.
 bool sendSavedCode(int index, String &outName) {
@@ -102,8 +150,8 @@ bool sendSavedCode(int index, String &outName) {
 
   if (String(protocol).equalsIgnoreCase("NEC") && strlen(valueHex) > 0) {
     uint32_t value = strtoul(valueHex, nullptr, 16);
-    irsend.sendNEC(value, bits);
-    printf("[IR] Sent saved code #%d: NEC 0x%s %db (%s)\n", index, valueHex, bits, outName.c_str());
+    irSender.queue(value, bits, 1);
+    printf("[IR] TX NEC 0x%s %db (%s)\n", valueHex, bits, outName.length() ? outName.c_str() : "no name");
     return true;
   }
 
@@ -455,6 +503,7 @@ void handleSend(AsyncWebServerRequest *request) {
     }
     uint32_t value = strtoul(data.c_str(), nullptr, 16);
     irSender.queue(value, length, repeat);
+    printf("[IR] TX NEC 0x%s %db (no name)\n", data.c_str(), length);
     request->send(200, "text/plain", "Sent NEC " + data);
   } else {
     request->send(400, "text/plain", "Unsupported type");
@@ -504,6 +553,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
       }
       uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
       irSender.queue(value, length, 1);
+      printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
       JsonDocument ack;
       ack["ok"] = true;
       ack["msg"] = "Sent NEC " + sdata;

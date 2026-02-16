@@ -2,15 +2,17 @@
 //
 // Uses the Arduino-ESP32 built-in BLE library (Bluedroid stack).
 //
-// Exposes three characteristics behind bonded encryption:
+// Exposes four characteristics behind bonded encryption:
 //   - Saved Codes  (Read)   — JSON array of stored IR commands
 //   - Send Command (Write)  — write a single byte (NVS index) to send that code
 //   - Status       (Notify) — result string after a send ("OK:<name>" or "ERR:…")
+//   - Schedule     (Write)  — JSON: arm delayed command or heartbeat to reset timer
 //
 // Security: bonding + MITM + Secure Connections, passkey displayed on Serial.
 // Auto-reconnect: advertising restarts on disconnect so the client reconnects.
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -22,19 +24,25 @@
 // External helpers defined in main.cpp
 // ---------------------------------------------------------------------------
 extern String getSavedCodesJson();
+extern String getSavedCodesJsonCompact();
+extern int    getSavedCodeIndexByName(const char *name);
 extern bool   sendSavedCode(int index, String &outName);
 
 // ---------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------
-static BLEServer*         pServer     = nullptr;
-static BLECharacteristic* pSavedChar  = nullptr;
-static BLECharacteristic* pSendChar   = nullptr;
-static BLECharacteristic* pStatusChar = nullptr;
+static BLEServer*         pServer       = nullptr;
+static BLECharacteristic* pSavedChar   = nullptr;
+static BLECharacteristic* pSendChar    = nullptr;
+static BLECharacteristic* pStatusChar  = nullptr;
+static BLECharacteristic* pScheduleChar = nullptr;
 static bool               deviceConnected = false;
-static unsigned long      disconnectTime = 0;
-static bool               offSentAfterDisconnect = true;   // true so we don't fire on boot
-static bool               hasEverConnected = false;
+
+// Delayed command: run a saved code by name after delay_seconds unless heartbeat resets.
+static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
+static uint32_t scheduledDelayMs   = 0;
+static unsigned long lastHeartbeatMs = 0;
+static bool     scheduledArmed    = false;
 
 // Helper: set Status characteristic and notify if connected.
 static void setStatus(const String& msg) {
@@ -50,42 +58,35 @@ static void setStatus(const String& msg) {
 class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
-    hasEverConnected = true;
-    offSentAfterDisconnect = true;   // reset; only send Off after next disconnect timeout
     printf("[BLE] Client connected\n");
-
-    // Auto-send "On" when client connects (Blaster Mac Client).
-    String name;
-    if (sendSavedCode(BLE_CONNECT_SEND_INDEX, name)) {
-      String status = "OK:" + (name.length() > 0 ? name : String(BLE_CONNECT_SEND_INDEX));
-      setStatus(status);
-      printf("[BLE] Auto-send on connect: %s\n", status.c_str());
-    } else {
-      setStatus("ERR:connect send");
-      printf("[BLE] Auto-send on connect failed\n");
-    }
   }
 
   void onDisconnect(BLEServer* pServer) override {
     deviceConnected = false;
-    disconnectTime = millis();
-    offSentAfterDisconnect = false;
     printf("[BLE] Client disconnected — restarting advertising\n");
     BLEDevice::startAdvertising();
   }
 };
 
 // ---------------------------------------------------------------------------
-// Security callbacks — passkey and authentication
+// Security callbacks — passkey (when BLE_USE_PASSKEY) or Just Works
 // ---------------------------------------------------------------------------
 class IRSecurityCallbacks : public BLESecurityCallbacks {
   uint32_t onPassKeyRequest() override {
+#if BLE_USE_PASSKEY
     printf("[BLE] *** Pairing passkey: %06u — enter this on the client ***\n", (unsigned)BLE_PASSKEY);
     return BLE_PASSKEY;
+#else
+    return 0;
+#endif
   }
 
   void onPassKeyNotify(uint32_t pass_key) override {
+#if BLE_USE_PASSKEY
     printf("[BLE] *** Pairing passkey (display): %06u ***\n", (unsigned)pass_key);
+#else
+    (void)pass_key;
+#endif
   }
 
   bool onSecurityRequest() override {
@@ -102,7 +103,11 @@ class IRSecurityCallbacks : public BLESecurityCallbacks {
   }
 
   bool onConfirmPIN(uint32_t pin) override {
+#if BLE_USE_PASSKEY
     printf("[BLE] Confirm PIN: %06u — accepted\n", (unsigned)pin);
+#else
+    (void)pin;
+#endif
     return true;
   }
 };
@@ -111,10 +116,10 @@ class IRSecurityCallbacks : public BLESecurityCallbacks {
 // Characteristic callbacks
 // ---------------------------------------------------------------------------
 
-// Saved Codes — refreshed from NVS on every read.
+// Saved Codes — compact JSON (index + name) to stay under 600-byte BLE limit.
 class SavedCodesCallbacks : public BLECharacteristicCallbacks {
   void onRead(BLECharacteristic* pCharacteristic) override {
-    String json = getSavedCodesJson();
+    String json = getSavedCodesJsonCompact();
     pCharacteristic->setValue(json.c_str());
     printf("[BLE] Saved codes read (%u bytes)\n", (unsigned)json.length());
   }
@@ -144,6 +149,55 @@ class SendCommandCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
+// Schedule — JSON write: {"delay_seconds": N, "command": "Name"} to arm, or {"heartbeat": true} to reset.
+class ScheduleCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pCharacteristic) override {
+    std::string val = pCharacteristic->getValue();
+    if (val.size() == 0) {
+      setStatus("ERR:schedule empty");
+      return;
+    }
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, val.c_str(), val.size());
+    if (err) {
+      setStatus("ERR:schedule json");
+      printf("[BLE] Schedule: invalid JSON\n");
+      return;
+    }
+
+    if (doc["heartbeat"].is<bool>() && doc["heartbeat"].as<bool>()) {
+      lastHeartbeatMs = millis();
+      printf("[BLE] Schedule: heartbeat\n");
+      return;
+    }
+
+    if (doc["delay_seconds"].is<int>() && doc["command"].is<const char*>()) {
+      int sec = doc["delay_seconds"].as<int>();
+      const char* cmd = doc["command"].as<const char*>();
+      if (sec <= 0 || !cmd || !*cmd) {
+        setStatus("ERR:schedule invalid");
+        return;
+      }
+      size_t len = strlen(cmd);
+      if (len >= BLE_SCHEDULE_CMD_NAME_MAX) {
+        setStatus("ERR:schedule name long");
+        return;
+      }
+      strncpy(scheduledCommandName, cmd, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+      scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+      scheduledDelayMs = (uint32_t)sec * 1000UL;
+      lastHeartbeatMs = millis();
+      scheduledArmed = true;
+      printf("[BLE] Schedule: armed %s in %u s\n", scheduledCommandName, (unsigned)sec);
+      setStatus("OK:scheduled");
+      return;
+    }
+
+    setStatus("ERR:schedule format");
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Static callback instances
 // ---------------------------------------------------------------------------
@@ -151,6 +205,7 @@ static IRServerCallbacks    serverCb;
 static IRSecurityCallbacks  securityCb;
 static SavedCodesCallbacks  savedCodesCb;
 static SendCommandCallbacks sendCommandCb;
+static ScheduleCallbacks    scheduleCb;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -162,14 +217,16 @@ void setupBLE() {
   BLEDevice::init(BLE_DEVICE_NAME);
   BLEDevice::setMTU(512);
 
-  // Security: bonding + MITM + Secure Connections
-  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
+  // Security: bonding + encryption. Just Works (no passkey) or passkey entry when BLE_USE_PASSKEY.
+  BLEDevice::setEncryptionLevel(BLE_USE_PASSKEY ? ESP_BLE_SEC_ENCRYPT_MITM : ESP_BLE_SEC_ENCRYPT);
   BLEDevice::setSecurityCallbacks(&securityCb);
 
   BLESecurity *pSecurity = new BLESecurity();
-  pSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
-  pSecurity->setCapability(ESP_IO_CAP_OUT);  // display-only (passkey shown on Serial)
-  pSecurity->setStaticPIN(BLE_PASSKEY);
+  pSecurity->setAuthenticationMode(BLE_USE_PASSKEY ? ESP_LE_AUTH_REQ_SC_MITM_BOND : ESP_LE_AUTH_REQ_SC_BOND);
+  pSecurity->setCapability(BLE_USE_PASSKEY ? ESP_IO_CAP_OUT : ESP_IO_CAP_NONE);  // OUT = display passkey; NONE = Just Works
+  if (BLE_USE_PASSKEY) {
+    pSecurity->setStaticPIN(BLE_PASSKEY);
+  }
   pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   pSecurity->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
 
@@ -179,27 +236,38 @@ void setupBLE() {
   // --- Service ---
   BLEService* pService = pServer->createService(BLE_IR_SERVICE_UUID);
 
-  // Saved Codes (Read, encrypted + MITM)
+  // Characteristic permissions: ENC_MITM when passkey used, ENC only for Just Works (no MITM).
+  const uint32_t perm_read  = BLE_USE_PASSKEY ? ESP_GATT_PERM_READ_ENC_MITM  : ESP_GATT_PERM_READ_ENCRYPTED;
+  const uint32_t perm_write = BLE_USE_PASSKEY ? ESP_GATT_PERM_WRITE_ENC_MITM : ESP_GATT_PERM_WRITE_ENCRYPTED;
+
+  // Saved Codes (Read)
   pSavedChar = pService->createCharacteristic(
       BLE_CHAR_SAVED_UUID,
       BLECharacteristic::PROPERTY_READ);
-  pSavedChar->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+  pSavedChar->setAccessPermissions(perm_read);
   pSavedChar->setCallbacks(&savedCodesCb);
 
-  // Send Command (Write, encrypted + MITM)
+  // Send Command (Write)
   pSendChar = pService->createCharacteristic(
       BLE_CHAR_SEND_UUID,
       BLECharacteristic::PROPERTY_WRITE);
-  pSendChar->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+  pSendChar->setAccessPermissions(perm_write);
   pSendChar->setCallbacks(&sendCommandCb);
 
-  // Status (Read + Notify, encrypted + MITM)
+  // Status (Read + Notify)
   pStatusChar = pService->createCharacteristic(
       BLE_CHAR_STATUS_UUID,
       BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  pStatusChar->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+  pStatusChar->setAccessPermissions(perm_read);
   pStatusChar->addDescriptor(new BLE2902());
   pStatusChar->setValue("READY");
+
+  // Schedule (Write)
+  pScheduleChar = pService->createCharacteristic(
+      BLE_CHAR_SCHEDULE_UUID,
+      BLECharacteristic::PROPERTY_WRITE);
+  pScheduleChar->setAccessPermissions(perm_write);
+  pScheduleChar->setCallbacks(&scheduleCb);
 
   pService->start();
 
@@ -215,13 +283,22 @@ void setupBLE() {
 }
 
 void loopBLE() {
-  // After 15 min with no BLE client, auto-send "Off" once (Blaster Mac Client).
-  if (!deviceConnected && hasEverConnected && !offSentAfterDisconnect &&
-      (millis() - disconnectTime >= BLE_DISCONNECT_TIMEOUT_MS)) {
-    offSentAfterDisconnect = true;
-    String name;
-    if (sendSavedCode(BLE_TIMEOUT_SEND_INDEX, name)) {
-      printf("[BLE] Auto-send after disconnect timeout: %s\n", name.length() > 0 ? name.c_str() : "Off");
+  // Delayed command: if armed and timeout elapsed, run the scheduled command once.
+  if (scheduledArmed && scheduledCommandName[0] != '\0' &&
+      (millis() - lastHeartbeatMs) >= scheduledDelayMs) {
+    scheduledArmed = false;
+    int idx = getSavedCodeIndexByName(scheduledCommandName);
+    if (idx >= 0) {
+      String name;
+      if (sendSavedCode(idx, name)) {
+        setStatus("OK:scheduled " + name);
+        printf("[BLE] Scheduled command executed: %s\n", name.c_str());
+      } else {
+        setStatus("ERR:scheduled send");
+      }
+    } else {
+      setStatus("ERR:scheduled not found");
+      printf("[BLE] Scheduled command not found: %s\n", scheduledCommandName);
     }
   }
 }
