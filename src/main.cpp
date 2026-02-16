@@ -16,7 +16,6 @@
 #include "ir_utils.h"
 #include "IrSender.h"
 #include "ble_server.h"
-#include "IrSender.h"
 
 #define HISTORY_SIZE 5
 #define SAVED_CODES_NAMESPACE "ir_saved"
@@ -674,11 +673,11 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
         serializeJson(ack, ackStr);
         client->text(ackStr);
       } else {
-        StaticJsonDocument<256> errDoc;
-        errDoc["ok"] = false;
-        errDoc["error"] = "Invalid data or length";
+        StaticJsonDocument<256> err;
+        err["ok"] = false;
+        err["error"] = "Invalid data or length";
         String errStr;
-        serializeJson(errDoc, errStr);
+        serializeJson(err, errStr);
         client->text(errStr);
       }
     }
