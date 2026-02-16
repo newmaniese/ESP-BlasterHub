@@ -75,27 +75,62 @@ String getSavedCodesJson() {
 }
 
 // Compact JSON for BLE only (index + name, short keys) to stay under 600-byte characteristic limit.
+// When truncated, a sentinel entry is appended so BLE clients can detect it and know total count.
 static const size_t BLE_SAVED_CODES_MAX_LEN = 590;
+// Reserve for truncation sentinel: ,{"i":-1,"n":"","_truncated":true,"_total":NNN} + ']'
+static const size_t BLE_SAVED_TRUNCATED_SUFFIX_LEN = 50;
 String getSavedCodesJsonCompact() {
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   String out = "[";
-  for (int i = 0; i < n; i++) {
+  int i = 0;
+  for (; i < n; i++) {
     String key = String(i);
     String raw = savedCodes.getString(key.c_str(), "{}");
     JsonDocument entry;
     deserializeJson(entry, raw);
     const char *name = entry["name"] | "";
-    if (out.length() > 1) out += ",";
-    out += "{\"i\":";
-    out += String(i);
-    out += ",\"n\":\"";
+
+    // Build this entry in a fragment so we can check length before appending.
+    String frag;
+    if (out.length() > 1) frag += ",";
+    frag += "{\"i\":";
+    frag += String(i);
+    frag += ",\"n\":\"";
     for (const char *p = name; *p; p++) {
-      if (*p == '"' || *p == '\\') out += '\\';
-      out += *p;
+      unsigned char c = (unsigned char)*p;
+      if (c == '"' || c == '\\') {
+        frag += '\\';
+        frag += (char)c;
+      } else if (c == '\b') {
+        frag += "\\b";
+      } else if (c == '\t') {
+        frag += "\\t";
+      } else if (c == '\n') {
+        frag += "\\n";
+      } else if (c == '\f') {
+        frag += "\\f";
+      } else if (c == '\r') {
+        frag += "\\r";
+      } else if (c < 0x20) {
+        frag += "\\u";
+        char hex[5];
+        snprintf(hex, sizeof(hex), "%04x", c);
+        frag += hex;
+      } else {
+        frag += (char)c;
+      }
     }
-    out += "\"}";
-    if (out.length() >= BLE_SAVED_CODES_MAX_LEN) break;
+    frag += "\"}";
+
+    if (out.length() + frag.length() + BLE_SAVED_TRUNCATED_SUFFIX_LEN > BLE_SAVED_CODES_MAX_LEN)
+      break;
+    out += frag;
+  }
+  if (i < n) {
+    out += ",{\"i\":-1,\"n\":\"\",\"_truncated\":true,\"_total\":";
+    out += String(n);
+    out += "}";
   }
   out += "]";
   savedCodes.end();
