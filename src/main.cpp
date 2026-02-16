@@ -427,10 +427,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
     if (info->opcode != WS_TEXT) return;
     if (len == 0) return;
-    String msg;
-    for (size_t i = 0; i < len; i++) msg += (char)data[i];
     StaticJsonDocument<384> req;
-    DeserializationError err = deserializeJson(req, msg);
+    DeserializationError err = deserializeJson(req, data, len);
     if (err) return;
     if (!req["cmd"].is<const char *>() || String(req["cmd"].as<const char *>()) != "send") return;
     String stype = req["type"] | "";
