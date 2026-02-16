@@ -58,11 +58,13 @@ static void setStatus(const String& msg) {
 // ---------------------------------------------------------------------------
 class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
+    (void)pServer;
     deviceConnected = true;
     printf("[BLE] Client connected\n");
   }
 
   void onDisconnect(BLEServer* pServer) override {
+    (void)pServer;
     deviceConnected = false;
     // Start countdown only when client disconnects (N seconds until scheduled command).
     if (scheduledArmed) {
