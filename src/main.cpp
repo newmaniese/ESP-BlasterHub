@@ -579,7 +579,13 @@ void setupWifi() {
     delay(500);
     printf(".");
   }
-  printf("\n[IR] IP: %s\n", WiFi.localIP().toString().c_str());
+  printf("\n[IR] IP: %s", WiFi.localIP().toString().c_str());
+  uint32_t sec;
+  char cmd[BLE_SCHEDULE_CMD_NAME_MAX];
+  if (getScheduleCountdown(&sec, cmd, sizeof(cmd))) {
+    printf("  (%u s until %s)", (unsigned)sec, cmd);
+  }
+  printf("\n");
 }
 
 void setup() {
@@ -637,7 +643,13 @@ void loop() {
   if (millis() - lastStatusPrint >= 1000) {
     lastStatusPrint = millis();
     if (WiFi.status() == WL_CONNECTED) {
-      printf("[IR] IP: %s\n", WiFi.localIP().toString().c_str());
+      printf("[IR] IP: %s", WiFi.localIP().toString().c_str());
+      uint32_t sec;
+      char cmd[BLE_SCHEDULE_CMD_NAME_MAX];
+      if (getScheduleCountdown(&sec, cmd, sizeof(cmd))) {
+        printf("  (%u s until %s)", (unsigned)sec, cmd);
+      }
+      printf("\n");
     } else {
       printf("[IR] (WiFi not connected)\n");
     }

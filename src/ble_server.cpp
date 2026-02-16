@@ -38,10 +38,12 @@ static BLECharacteristic* pStatusChar  = nullptr;
 static BLECharacteristic* pScheduleChar = nullptr;
 static bool               deviceConnected = false;
 
-// Delayed command: run a saved code by name after delay_seconds unless heartbeat resets.
+// Delayed command: run a saved code by name after delay_seconds once client disconnects.
+// Countdown starts only when client disconnects (countdownStartMs set in onDisconnect).
 static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
 static uint32_t scheduledDelayMs   = 0;
-static unsigned long lastHeartbeatMs = 0;
+static unsigned long lastHeartbeatMs = 0;  // used by heartbeat to keep schedule armed while connected
+static unsigned long countdownStartMs = 0; // when client disconnected — countdown runs from here
 static bool     scheduledArmed    = false;
 
 // Helper: set Status characteristic and notify if connected.
@@ -58,11 +60,17 @@ static void setStatus(const String& msg) {
 class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
+    // Reset heartbeat timer on reconnect so scheduled "Off" doesn't fire after reconnect.
+    lastHeartbeatMs = millis();
     printf("[BLE] Client connected\n");
   }
 
   void onDisconnect(BLEServer* pServer) override {
     deviceConnected = false;
+    // Start countdown only when client disconnects (N seconds until scheduled command).
+    if (scheduledArmed) {
+      countdownStartMs = millis();
+    }
     printf("[BLE] Client disconnected — restarting advertising\n");
     BLEDevice::startAdvertising();
   }
@@ -282,10 +290,26 @@ void setupBLE() {
   printf("[BLE] Advertising started as \"%s\"\n", BLE_DEVICE_NAME);
 }
 
+bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_name, size_t name_max) {
+  // Countdown only runs when client is disconnected.
+  if (!scheduledArmed || scheduledCommandName[0] == '\0' || deviceConnected ||
+      !out_seconds_remaining || !out_command_name || name_max == 0) {
+    return false;
+  }
+  unsigned long elapsed = millis() - countdownStartMs;
+  if (elapsed >= scheduledDelayMs) {
+    return false;  // already expired, about to fire
+  }
+  *out_seconds_remaining = (scheduledDelayMs - (uint32_t)elapsed + 999) / 1000;
+  strncpy(out_command_name, scheduledCommandName, name_max - 1);
+  out_command_name[name_max - 1] = '\0';
+  return true;
+}
+
 void loopBLE() {
-  // Delayed command: if armed and timeout elapsed, run the scheduled command once.
-  if (scheduledArmed && scheduledCommandName[0] != '\0' &&
-      (millis() - lastHeartbeatMs) >= scheduledDelayMs) {
+  // Delayed command: countdown starts on disconnect; after delay_seconds run the scheduled command once.
+  if (scheduledArmed && scheduledCommandName[0] != '\0' && !deviceConnected &&
+      (millis() - countdownStartMs) >= scheduledDelayMs) {
     scheduledArmed = false;
     int idx = getSavedCodeIndexByName(scheduledCommandName);
     if (idx >= 0) {
