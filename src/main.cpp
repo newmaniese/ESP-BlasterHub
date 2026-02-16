@@ -13,6 +13,7 @@
 #include "secrets.h"
 #include "ir_utils.h"
 #include "IrSender.h"
+#include "ble_server.h"
 
 #define HISTORY_SIZE 5
 #define SAVED_CODES_NAMESPACE "ir_saved"
@@ -47,6 +48,67 @@ int getSavedCount() {
   int n = savedCodes.getInt("n", 0);
   savedCodes.end();
   return n;
+}
+
+// Build the JSON array of all saved codes (shared by HTTP and BLE).
+String getSavedCodesJson() {
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  DynamicJsonDocument doc(4096);
+  JsonArray arr = doc.to<JsonArray>();
+  for (int i = 0; i < n; i++) {
+    String key = String(i);
+    String raw = savedCodes.getString(key.c_str(), "{}");
+    JsonObject obj = arr.add<JsonObject>();
+    StaticJsonDocument<384> entry;
+    deserializeJson(entry, raw);
+    obj["index"] = i;
+    obj["name"] = entry["name"].as<const char *>();
+    obj["protocol"] = entry["protocol"].as<const char *>();
+    obj["value"] = entry["value"].as<const char *>();
+    obj["bits"] = entry["bits"].as<uint16_t>();
+  }
+  savedCodes.end();
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+// Send a stored IR code by NVS index.  Shared by HTTP, WebSocket, and BLE.
+// Returns true on success; fills outName with the code's stored name.
+bool sendSavedCode(int index, String &outName) {
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  if (index < 0 || index >= n) {
+    savedCodes.end();
+    outName = "";
+    return false;
+  }
+  String key = String(index);
+  String raw = savedCodes.getString(key.c_str(), "{}");
+  savedCodes.end();
+
+  StaticJsonDocument<384> entry;
+  DeserializationError err = deserializeJson(entry, raw);
+  if (err) {
+    outName = "";
+    return false;
+  }
+
+  outName = entry["name"] | "";
+  const char *protocol = entry["protocol"] | "";
+  const char *valueHex = entry["value"] | "";
+  uint16_t bits = entry["bits"] | 32;
+
+  if (String(protocol).equalsIgnoreCase("NEC") && strlen(valueHex) > 0) {
+    uint32_t value = strtoul(valueHex, nullptr, 16);
+    irsend.sendNEC(value, bits);
+    printf("[IR] Sent saved code #%d: NEC 0x%s %db (%s)\n", index, valueHex, bits, outName.c_str());
+    return true;
+  }
+
+  printf("[IR] Unsupported protocol for saved code #%d: %s\n", index, protocol);
+  return false;
 }
 
 // Template processor for LittleFS pages — replaces %PLACEHOLDER% tokens.
@@ -259,23 +321,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
 
 // GET /saved — JSON array of saved codes
 void handleSaved(AsyncWebServerRequest *request) {
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
-  JsonDocument doc;
-  JsonArray arr = doc.to<JsonArray>();
-  for (int i = 0; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
-    JsonDocument entry;
-    DeserializationError err = deserializeJson(entry, raw);
-    if (!err) {
-      entry["index"] = i;
-      arr.add(entry);
-    }
-  }
-  savedCodes.end();
-  String out;
-  serializeJson(doc, out);
+  String out = getSavedCodesJson();
   request->send(200, "application/json", out);
 }
 
@@ -530,6 +576,8 @@ void setup() {
   server.begin();
 
   printf("[IR] HTTP IR server started\n");
+
+  setupBLE();
 }
 
 void loop() {
@@ -582,6 +630,8 @@ void loop() {
 
     irrecv.resume();
   }
+
+  loopBLE();
 
   // AsyncWebServer handles HTTP in background.
 }
