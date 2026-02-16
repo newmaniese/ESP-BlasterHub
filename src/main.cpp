@@ -259,19 +259,17 @@ void handleSaveGet(AsyncWebServerRequest *request) {
 void handleSaved(AsyncWebServerRequest *request) {
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
   JsonArray arr = doc.to<JsonArray>();
   for (int i = 0; i < n; i++) {
     String key = String(i);
     String raw = savedCodes.getString(key.c_str(), "{}");
-    JsonObject obj = arr.add<JsonObject>();
-    StaticJsonDocument<384> entry;
-    deserializeJson(entry, raw);
-    obj["index"] = i;
-    obj["name"] = entry["name"].as<const char *>();
-    obj["protocol"] = entry["protocol"].as<const char *>();
-    obj["value"] = entry["value"].as<const char *>();
-    obj["bits"] = entry["bits"].as<uint16_t>();
+    JsonDocument entry;
+    DeserializationError err = deserializeJson(entry, raw);
+    if (!err) {
+      entry["index"] = i;
+      arr.add(entry);
+    }
   }
   savedCodes.end();
   String out;
