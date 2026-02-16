@@ -392,7 +392,20 @@ void handleSend(AsyncWebServerRequest *request) {
   int length = request->hasParam("length") ? request->getParam("length")->value().toInt() : 32;
   int repeat = request->hasParam("repeat") ? request->getParam("repeat")->value().toInt() : 1;
 
+  if (length < 1 || length > 128) {
+    request->send(400, "text/plain", "Invalid length (1-128)");
+    return;
+  }
+  if (repeat < 1 || repeat > 20) {
+    request->send(400, "text/plain", "Invalid repeat (1-20)");
+    return;
+  }
+
   if (type == "nec") {
+    if (!isHexValue(data.c_str())) {
+      request->send(400, "text/plain", "Invalid hex data");
+      return;
+    }
     uint32_t value = strtoul(data.c_str(), nullptr, 16);
     for (int i = 0; i < repeat; i++) {
       irsend.sendNEC(value, length);
@@ -438,6 +451,15 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     int length = req["length"] | 32;
     String name = req["name"] | "";
     if (stype == "nec" && sdata.length() > 0) {
+      if (!isHexValue(sdata.c_str()) || length < 1 || length > 128) {
+        StaticJsonDocument<256> nack;
+        nack["ok"] = false;
+        nack["error"] = "Invalid hex data or length";
+        String nackStr;
+        serializeJson(nack, nackStr);
+        client->text(nackStr);
+        return;
+      }
       uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
       irsend.sendNEC(value, length);
       StaticJsonDocument<256> ack;
