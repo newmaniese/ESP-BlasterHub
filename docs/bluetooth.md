@@ -212,4 +212,5 @@ The device must be powered on, advertising, and already bonded with the Mac runn
 
 ## Flash budget note
 
+
 The Bluedroid BLE stack is larger than NimBLE, so the firmware uses the `huge_app.csv` partition scheme (~3 MB app partition, ~960 KB filesystem). This eliminates OTA support but provides ample room for BLE + WiFi + IRremote. The LittleFS partition (960 KB) is more than sufficient for the frontend files.
