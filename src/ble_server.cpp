@@ -6,7 +6,7 @@
 //   - Saved Codes  (Read)   — JSON array of stored IR commands
 //   - Send Command (Write)  — write a single byte (NVS index) to send that code
 //   - Status       (Notify) — result string after a send ("OK:<name>" or "ERR:…")
-//   - Schedule     (Write)  — JSON: arm delayed command or heartbeat to reset timer
+//   - Schedule     (Write)  — JSON: arm delayed command or accept heartbeat keepalive
 //
 // Security: bonding + MITM + Secure Connections, passkey displayed on Serial.
 // Auto-reconnect: advertising restarts on disconnect so the client reconnects.
@@ -42,7 +42,6 @@ static bool               deviceConnected = false;
 // Countdown starts only when client disconnects (countdownStartMs set in onDisconnect).
 static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
 static uint32_t scheduledDelayMs   = 0;
-static unsigned long lastHeartbeatMs = 0;  // used by heartbeat to keep schedule armed while connected
 static unsigned long countdownStartMs = 0; // when client disconnected — countdown runs from here
 static bool     scheduledArmed    = false;
 
@@ -60,8 +59,6 @@ static void setStatus(const String& msg) {
 class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
-    // Reset heartbeat timer on reconnect so scheduled "Off" doesn't fire after reconnect.
-    lastHeartbeatMs = millis();
     printf("[BLE] Client connected\n");
   }
 
@@ -157,7 +154,7 @@ class SendCommandCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-// Schedule — JSON write: {"delay_seconds": N, "command": "Name"} to arm, or {"heartbeat": true} to reset.
+// Schedule — JSON write: {"delay_seconds": N, "command": "Name"} to arm, or {"heartbeat": true} keepalive.
 class ScheduleCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pCharacteristic) override {
     std::string val = pCharacteristic->getValue();
@@ -175,7 +172,6 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
     }
 
     if (doc["heartbeat"].is<bool>() && doc["heartbeat"].as<bool>()) {
-      lastHeartbeatMs = millis();
       printf("[BLE] Schedule: heartbeat\n");
       return;
     }
@@ -200,7 +196,6 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
       strncpy(scheduledCommandName, cmd, BLE_SCHEDULE_CMD_NAME_MAX - 1);
       scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
       scheduledDelayMs = (uint32_t)sec * 1000UL;
-      lastHeartbeatMs = millis();
       scheduledArmed = true;
       printf("[BLE] Schedule: armed %s in %u s\n", scheduledCommandName, (unsigned)sec);
       setStatus("OK:scheduled");
