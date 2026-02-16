@@ -16,6 +16,7 @@
 #include "ir_utils.h"
 #include "IrSender.h"
 #include "ble_server.h"
+#include "IrSender.h"
 
 #define HISTORY_SIZE 5
 #define SAVED_CODES_NAMESPACE "ir_saved"
@@ -673,7 +674,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
       uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
       irSender.queue(value, length, 1);
       printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
-      JsonDocument ack;
+      StaticJsonDocument<256> ack;
       ack["ok"] = true;
       ack["msg"] = "Sent NEC " + sdata;
       if (name.length() > 0) ack["name"] = name;
