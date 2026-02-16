@@ -10,6 +10,8 @@
 #include <IRrecv.h>
 #include <IRsend.h>
 #include <IRutils.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "secrets.h"
 #include "ir_utils.h"
 #include "IrSender.h"
@@ -42,8 +44,45 @@ IrCapture history[HISTORY_SIZE];
 int historyLen = 0;
 
 Preferences savedCodes;
+// BLE callbacks and AsyncWebServer handlers run on different tasks, so NVS access
+// through this shared Preferences instance must be serialized.
+static SemaphoreHandle_t savedCodesMutex = nullptr;
+
+static bool initSavedCodesMutex() {
+  if (savedCodesMutex != nullptr) return true;
+  savedCodesMutex = xSemaphoreCreateMutex();
+  if (savedCodesMutex == nullptr) {
+    printf("[IR] Failed to create saved codes mutex\n");
+    return false;
+  }
+  return true;
+}
+
+class SavedCodesLock {
+public:
+  SavedCodesLock() : locked(false) {
+    if (!initSavedCodesMutex()) return;
+    locked = (xSemaphoreTake(savedCodesMutex, portMAX_DELAY) == pdTRUE);
+    if (!locked) {
+      printf("[IR] Failed to lock saved codes mutex\n");
+    }
+  }
+
+  ~SavedCodesLock() {
+    if (locked) xSemaphoreGive(savedCodesMutex);
+  }
+
+  explicit operator bool() const {
+    return locked;
+  }
+
+private:
+  bool locked;
+};
 
 int getSavedCount() {
+  SavedCodesLock lock;
+  if (!lock) return 0;
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   savedCodes.end();
@@ -52,6 +91,8 @@ int getSavedCount() {
 
 // Build the JSON array of all saved codes (shared by HTTP and BLE).
 String getSavedCodesJson() {
+  SavedCodesLock lock;
+  if (!lock) return "[]";
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   JsonDocument doc;
@@ -80,6 +121,8 @@ static const size_t BLE_SAVED_CODES_MAX_LEN = 590;
 // Reserve for truncation sentinel: ,{"i":-1,"n":"","_truncated":true,"_total":NNN} + ']'
 static const size_t BLE_SAVED_TRUNCATED_SUFFIX_LEN = 50;
 String getSavedCodesJsonCompact() {
+  SavedCodesLock lock;
+  if (!lock) return "[]";
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   String out = "[";
@@ -141,6 +184,8 @@ String getSavedCodesJsonCompact() {
 // Find first saved code index whose name matches (case-insensitive). Returns -1 if not found.
 int getSavedCodeIndexByName(const char *name) {
   if (!name || !*name) return -1;
+  SavedCodesLock lock;
+  if (!lock) return -1;
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   for (int i = 0; i < n; i++) {
@@ -161,16 +206,24 @@ int getSavedCodeIndexByName(const char *name) {
 // Send a stored IR code by NVS index.  Shared by HTTP, WebSocket, and BLE.
 // Returns true on success; fills outName with the code's stored name.
 bool sendSavedCode(int index, String &outName) {
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
-  if (index < 0 || index >= n) {
+  String raw;
+  {
+    SavedCodesLock lock;
+    if (!lock) {
+      outName = "";
+      return false;
+    }
+    savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+    int n = savedCodes.getInt("n", 0);
+    if (index < 0 || index >= n) {
+      savedCodes.end();
+      outName = "";
+      return false;
+    }
+    String key = String(index);
+    raw = savedCodes.getString(key.c_str(), "{}");
     savedCodes.end();
-    outName = "";
-    return false;
   }
-  String key = String(index);
-  String raw = savedCodes.getString(key.c_str(), "{}");
-  savedCodes.end();
 
   JsonDocument entry;
   DeserializationError err = deserializeJson(entry, raw);
@@ -236,6 +289,11 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
     request->send(400, "application/json", "{\"error\":\"Missing value\"}");
     return;
   }
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   JsonObject obj = doc.to<JsonObject>();
@@ -294,6 +352,11 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   outDoc["skipped"] = 0;
   JsonArray errors = outDoc["errors"].to<JsonArray>();
 
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"ok\":false,\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
 
@@ -386,6 +449,11 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     valueHex = buf;
     bits = c.bits;
   }
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   JsonDocument doc;
@@ -415,6 +483,11 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     return;
   }
   int index = request->getParam("index")->value().toInt();
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   if (index < 0 || index >= n) {
@@ -439,6 +512,11 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   int index = request->getParam("index")->value().toInt();
   String newName = request->getParam("name")->value();
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   if (index < 0 || index >= n) {
@@ -470,6 +548,11 @@ void handleSavedRename(AsyncWebServerRequest *request) {
 
 // GET /dump — plain text for hardcoding (C-style)
 void handleDump(AsyncWebServerRequest *request) {
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "text/plain", "Storage unavailable");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   String out = "// Saved IR codes — paste into firmware\n";
@@ -628,6 +711,9 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   printf("[IR] --- ESP32-C3 IR Blaster boot ---\n");
+  if (!initSavedCodesMutex()) {
+    printf("[IR] WARNING: saved codes mutex unavailable; storage operations may fail\n");
+  }
 
   setupWifi();
 
