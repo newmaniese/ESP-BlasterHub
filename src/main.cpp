@@ -114,12 +114,12 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   }
   if (len) acc->concat((const char *)data, len);
   if (index + len != total) return;
-
   String body = *acc;
   delete acc;
   request->_tempObject = nullptr;
 
-  DynamicJsonDocument inputDoc((size_t)body.length() + 2048);
+  size_t docSize = (size_t)body.length() + 2048;
+  DynamicJsonDocument inputDoc(docSize);
   DeserializationError err = deserializeJson(inputDoc, body);
   if (err) {
     request->send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
@@ -510,7 +510,13 @@ void setup() {
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
   server.on("/saved", HTTP_GET, handleSaved);
-  server.on("/saved/import", HTTP_POST, [](AsyncWebServerRequest *request) { /* body handled in onSavedImportBody */ }, nullptr, onSavedImportBody);
+  server.on("/saved/import", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if (request->contentLength() == 0) {
+      request->send(411, "application/json", "{\"ok\":false,\"error\":\"Content-Length required\"}");
+      return;
+    }
+    /* body handled in onSavedImportBody */
+  }, nullptr, onSavedImportBody);
   server.on("/saved/delete", HTTP_POST, handleSavedDelete);
   server.on("/saved/rename", HTTP_POST, handleSavedRename);
   server.on("/dump", HTTP_GET, handleDump);
