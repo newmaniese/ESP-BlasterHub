@@ -40,14 +40,6 @@ int historyLen = 0;
 
 Preferences savedCodes;
 
-bool isHexValue(const char *s) {
-  if (!s || !*s) return false;
-  for (const char *p = s; *p; ++p) {
-    if (!isxdigit((unsigned char)*p)) return false;
-  }
-  return true;
-}
-
 int getSavedCount() {
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
