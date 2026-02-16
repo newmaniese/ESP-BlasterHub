@@ -2,6 +2,7 @@
 #define IR_UTILS_H
 
 #include <Arduino.h>
+#include "hex_utils.h"
 
 struct IrCapture {
   String protocol;
@@ -21,8 +22,5 @@ String sendUrlForSaved(const char* protocol, const char* valueHex, uint16_t bits
 
 // Escape &, <, >, " for safe HTML embedding.
 String escapeHtml(const String& s);
-
-// Returns true if s is a non-empty string of hex digits.
-bool isHexValue(const char* s);
 
 #endif // IR_UTILS_H
