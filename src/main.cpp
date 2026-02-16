@@ -65,6 +65,11 @@ String templateProcessor(const String& var) {
 // POST /save — body JSON: { "name": "Power", "protocol": "NEC", "value": "FF827D", "bits": 32 }
 // Body handler accumulates and processes when complete.
 void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+  const size_t MAX_BODY_SIZE = 2048;
+  if (total > MAX_BODY_SIZE) {
+    if (index == 0) request->send(413, "application/json", "{\"error\":\"Payload too large\"}");
+    return;
+  }
   String *acc = (String *)request->_tempObject;
   if (acc == nullptr) {
     acc = new String();
@@ -115,6 +120,11 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
 // POST /saved/import — body JSON array of { "name", "protocol", "value", "bits" }.
 // Appends valid entries to NVS and skips invalid entries with a summary.
 void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+  const size_t MAX_IMPORT_SIZE = 10240;
+  if (total > MAX_IMPORT_SIZE) {
+    if (index == 0) request->send(413, "application/json", "{\"ok\":false,\"error\":\"Payload too large\"}");
+    return;
+  }
   String *acc = (String *)request->_tempObject;
   if (acc == nullptr) {
     acc = new String();
