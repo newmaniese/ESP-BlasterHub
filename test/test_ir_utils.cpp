@@ -51,6 +51,30 @@ void test_replayUrlFor_nec_case_insensitive(void) {
 }
 
 // ---------------------------------------------------------------------------
+// isHexValue
+// ---------------------------------------------------------------------------
+
+void test_isHexValue_valid(void) {
+  TEST_ASSERT_TRUE(isHexValue("0123456789ABCDEF"));
+  TEST_ASSERT_TRUE(isHexValue("abcdef"));
+  TEST_ASSERT_TRUE(isHexValue("0"));
+}
+
+void test_isHexValue_invalid(void) {
+  TEST_ASSERT_FALSE(isHexValue("G"));
+  TEST_ASSERT_FALSE(isHexValue("123G"));
+  TEST_ASSERT_FALSE(isHexValue(" "));
+}
+
+void test_isHexValue_empty(void) {
+  TEST_ASSERT_FALSE(isHexValue(""));
+}
+
+void test_isHexValue_null(void) {
+  TEST_ASSERT_FALSE(isHexValue(nullptr));
+}
+
+// ---------------------------------------------------------------------------
 // saveUrlFor
 // ---------------------------------------------------------------------------
 
@@ -185,6 +209,12 @@ void setup() {
   RUN_TEST(test_escapeHtml_plain_string_unchanged);
   RUN_TEST(test_escapeHtml_empty_string);
   RUN_TEST(test_escapeHtml_all_special);
+
+  // isHexValue
+  RUN_TEST(test_isHexValue_valid);
+  RUN_TEST(test_isHexValue_invalid);
+  RUN_TEST(test_isHexValue_empty);
+  RUN_TEST(test_isHexValue_null);
 
   UNITY_END();
 }
