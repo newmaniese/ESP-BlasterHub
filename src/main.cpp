@@ -675,7 +675,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
       uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
       irSender.queue(value, length, 1);
       printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
-      StaticJsonDocument<256> ack;
+      JsonDocument ack;
       ack["ok"] = true;
       ack["msg"] = "Sent NEC " + sdata;
       if (name.length() > 0) ack["name"] = name;
