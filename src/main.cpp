@@ -128,7 +128,8 @@ String getSavedCodesJsonCompact() {
     out += frag;
   }
   if (i < n) {
-    out += ",{\"i\":-1,\"n\":\"\",\"_truncated\":true,\"_total\":";
+    if (out.length() > 1) out += ",";
+    out += "{\"i\":-1,\"n\":\"\",\"_truncated\":true,\"_total\":";
     out += String(n);
     out += "}";
   }
