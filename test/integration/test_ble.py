@@ -127,6 +127,20 @@ class TestSavedCodesCharacteristic:
         assert "i" in entry or "index" in entry, "Missing index key (i or index)"
         assert "n" in entry or "name" in entry, "Missing name key (n or name)"
 
+    @pytest.mark.asyncio
+    async def test_truncation_sentinel_when_present(self, client):
+        """When the list is truncated, last entry is a sentinel with _truncated and _total."""
+        raw = await client.read_gatt_char(CHAR_SAVED_UUID)
+        data = json.loads(raw.decode("utf-8"))
+        if len(data) == 0:
+            pytest.skip("No saved codes on device")
+        last = data[-1]
+        if last.get("_truncated") is True:
+            assert last.get("i") == -1, "Truncation sentinel must have i == -1"
+            assert "_total" in last, "Truncation sentinel must include _total"
+            total = last["_total"]
+            assert isinstance(total, int) and total >= len(data) - 1
+
 
 # ---------------------------------------------------------------------------
 # Send Command characteristic (Write) + Status (Notify)

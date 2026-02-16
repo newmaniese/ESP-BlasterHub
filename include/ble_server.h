@@ -14,6 +14,8 @@
 #define BLE_PASSKEY               123456  // used only when BLE_USE_PASSKEY is 1
 
 #define BLE_SCHEDULE_CMD_NAME_MAX 32   // max length of scheduled command name
+// Max delay_seconds so that delay_seconds * 1000 fits in uint32_t (avoids overflow).
+#define BLE_SCHEDULE_DELAY_SEC_MAX  (4294967u)  // UINT32_MAX / 1000
 
 // Call from setup() after IR and NVS are ready.
 void setupBLE();

@@ -187,6 +187,11 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
         setStatus("ERR:schedule invalid");
         return;
       }
+      if ((uint32_t)sec > BLE_SCHEDULE_DELAY_SEC_MAX) {
+        setStatus("ERR:schedule delay too long");
+        printf("[BLE] Schedule: delay_seconds %d exceeds max %u\n", sec, (unsigned)BLE_SCHEDULE_DELAY_SEC_MAX);
+        return;
+      }
       size_t len = strlen(cmd);
       if (len >= BLE_SCHEDULE_CMD_NAME_MAX) {
         setStatus("ERR:schedule name long");

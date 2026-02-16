@@ -29,16 +29,28 @@ All characteristics require an **encrypted and authenticated** connection (bondi
 
 ### Saved Codes payload
 
-A JSON array identical to the HTTP `GET /saved` response:
+A JSON array in **compact form** (short keys to fit the characteristic size limit): each element is `{"i": <index>, "n": "<name>"}`. Example:
 
 ```json
 [
-  { "index": 0, "name": "Power", "protocol": "NEC", "value": "FF827D00", "bits": 32 },
-  { "index": 1, "name": "Vol Up", "protocol": "NEC", "value": "FF629D00", "bits": 32 }
+  { "i": 0, "n": "Power" },
+  { "i": 1, "n": "Vol Up" }
 ]
 ```
 
-The BLE stack negotiates an MTU up to 512 bytes and supports long reads, so lists of dozens of codes transfer without issue.
+If the list is truncated due to the ~590-byte limit, a **sentinel entry** is appended so clients can detect it and know the full count:
+
+```json
+[
+  { "i": 0, "n": "Power" },
+  { "i": 1, "n": "Vol Up" },
+  { "i": -1, "n": "", "_truncated": true, "_total": 12 }
+]
+```
+
+When building name→index mappings, skip entries where `"i" < 0` or `"_truncated"` is present. Use `"_total"` to know the valid index range (0 to `_total - 1`) and that commands beyond the listed entries exist (e.g. use HTTP `GET /saved` for the full list).
+
+The BLE stack negotiates an MTU up to 512 bytes and supports long reads; only very long lists are truncated.
 
 ### Send Command payload
 
