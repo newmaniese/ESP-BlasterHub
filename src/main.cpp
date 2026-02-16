@@ -10,8 +10,12 @@
 #include <IRrecv.h>
 #include <IRsend.h>
 #include <IRutils.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "secrets.h"
 #include "ir_utils.h"
+#include "IrSender.h"
+#include "ble_server.h"
 #include "IrSender.h"
 
 #define HISTORY_SIZE 5
@@ -41,12 +45,208 @@ IrCapture history[HISTORY_SIZE];
 int historyLen = 0;
 
 Preferences savedCodes;
+// BLE callbacks and AsyncWebServer handlers run on different tasks, so NVS access
+// through this shared Preferences instance must be serialized.
+static SemaphoreHandle_t savedCodesMutex = nullptr;
+
+static bool initSavedCodesMutex() {
+  if (savedCodesMutex != nullptr) return true;
+  savedCodesMutex = xSemaphoreCreateMutex();
+  if (savedCodesMutex == nullptr) {
+    printf("[IR] Failed to create saved codes mutex\n");
+    return false;
+  }
+  return true;
+}
+
+class SavedCodesLock {
+public:
+  SavedCodesLock() : locked(false) {
+    if (!initSavedCodesMutex()) return;
+    locked = (xSemaphoreTake(savedCodesMutex, portMAX_DELAY) == pdTRUE);
+    if (!locked) {
+      printf("[IR] Failed to lock saved codes mutex\n");
+    }
+  }
+
+  ~SavedCodesLock() {
+    if (locked) xSemaphoreGive(savedCodesMutex);
+  }
+
+  explicit operator bool() const {
+    return locked;
+  }
+
+private:
+  bool locked;
+};
 
 int getSavedCount() {
+  SavedCodesLock lock;
+  if (!lock) return 0;
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   savedCodes.end();
   return n;
+}
+
+// Build the JSON array of all saved codes (shared by HTTP and BLE).
+String getSavedCodesJson() {
+  SavedCodesLock lock;
+  if (!lock) return "[]";
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+  for (int i = 0; i < n; i++) {
+    String key = String(i);
+    String raw = savedCodes.getString(key.c_str(), "{}");
+    JsonObject obj = arr.add<JsonObject>();
+    JsonDocument entry;
+    deserializeJson(entry, raw);
+    obj["index"] = i;
+    obj["name"] = entry["name"].as<const char *>();
+    obj["protocol"] = entry["protocol"].as<const char *>();
+    obj["value"] = entry["value"].as<const char *>();
+    obj["bits"] = entry["bits"].as<uint16_t>();
+  }
+  savedCodes.end();
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+// Compact JSON for BLE only (index + name, short keys) to stay under 600-byte characteristic limit.
+// When truncated, a sentinel entry is appended so BLE clients can detect it and know total count.
+static const size_t BLE_SAVED_CODES_MAX_LEN = 590;
+// Reserve for truncation sentinel: ,{"i":-1,"n":"","_truncated":true,"_total":NNN} + ']'
+static const size_t BLE_SAVED_TRUNCATED_SUFFIX_LEN = 50;
+String getSavedCodesJsonCompact() {
+  SavedCodesLock lock;
+  if (!lock) return "[]";
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  String out = "[";
+  int i = 0;
+  for (; i < n; i++) {
+    String key = String(i);
+    String raw = savedCodes.getString(key.c_str(), "{}");
+    JsonDocument entry;
+    deserializeJson(entry, raw);
+    const char *name = entry["name"] | "";
+
+    // Build this entry in a fragment so we can check length before appending.
+    String frag;
+    if (out.length() > 1) frag += ",";
+    frag += "{\"i\":";
+    frag += String(i);
+    frag += ",\"n\":\"";
+    for (const char *p = name; *p; p++) {
+      unsigned char c = (unsigned char)*p;
+      if (c == '"' || c == '\\') {
+        frag += '\\';
+        frag += (char)c;
+      } else if (c == '\b') {
+        frag += "\\b";
+      } else if (c == '\t') {
+        frag += "\\t";
+      } else if (c == '\n') {
+        frag += "\\n";
+      } else if (c == '\f') {
+        frag += "\\f";
+      } else if (c == '\r') {
+        frag += "\\r";
+      } else if (c < 0x20) {
+        frag += "\\u";
+        char hex[5];
+        snprintf(hex, sizeof(hex), "%04x", c);
+        frag += hex;
+      } else {
+        frag += (char)c;
+      }
+    }
+    frag += "\"}";
+
+    if (out.length() + frag.length() + BLE_SAVED_TRUNCATED_SUFFIX_LEN > BLE_SAVED_CODES_MAX_LEN)
+      break;
+    out += frag;
+  }
+  if (i < n) {
+    if (out.length() > 1) out += ",";
+    out += "{\"i\":-1,\"n\":\"\",\"_truncated\":true,\"_total\":";
+    out += String(n);
+    out += "}";
+  }
+  out += "]";
+  savedCodes.end();
+  return out;
+}
+
+// Find first saved code index whose name matches (case-insensitive). Returns -1 if not found.
+int getSavedCodeIndexByName(const char *name) {
+  if (!name || !*name) return -1;
+  SavedCodesLock lock;
+  if (!lock) return -1;
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  for (int i = 0; i < n; i++) {
+    String key = String(i);
+    String raw = savedCodes.getString(key.c_str(), "{}");
+    JsonDocument entry;
+    if (deserializeJson(entry, raw)) continue;
+    const char *stored = entry["name"] | "";
+    if (strcasecmp(stored, name) == 0) {
+      savedCodes.end();
+      return i;
+    }
+  }
+  savedCodes.end();
+  return -1;
+}
+
+// Send a stored IR code by NVS index.  Shared by HTTP, WebSocket, and BLE.
+// Returns true on success; fills outName with the code's stored name.
+bool sendSavedCode(int index, String &outName) {
+  String raw;
+  {
+    SavedCodesLock lock;
+    if (!lock) {
+      outName = "";
+      return false;
+    }
+    savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+    int n = savedCodes.getInt("n", 0);
+    if (index < 0 || index >= n) {
+      savedCodes.end();
+      outName = "";
+      return false;
+    }
+    String key = String(index);
+    raw = savedCodes.getString(key.c_str(), "{}");
+    savedCodes.end();
+  }
+
+  JsonDocument entry;
+  DeserializationError err = deserializeJson(entry, raw);
+  if (err) {
+    outName = "";
+    return false;
+  }
+
+  outName = entry["name"] | "";
+  const char *protocol = entry["protocol"] | "";
+  const char *valueHex = entry["value"] | "";
+  uint16_t bits = entry["bits"] | 32;
+
+  if (String(protocol).equalsIgnoreCase("NEC") && strlen(valueHex) > 0) {
+    uint32_t value = strtoul(valueHex, nullptr, 16);
+    irSender.queue(value, bits, 1);
+    printf("[IR] TX NEC 0x%s %db (%s)\n", valueHex, bits, outName.length() ? outName.c_str() : "no name");
+    return true;
+  }
+
+  printf("[IR] Unsupported protocol for saved code #%d: %s\n", index, protocol);
+  return false;
 }
 
 // Template processor for LittleFS pages — replaces %PLACEHOLDER% tokens.
@@ -76,7 +276,7 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   delete acc;
   request->_tempObject = nullptr;
 
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
   DeserializationError err = deserializeJson(doc, body);
   if (err) {
     request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
@@ -88,6 +288,11 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   uint16_t bits = doc["bits"] | 32;
   if (!valueHex) {
     request->send(400, "application/json", "{\"error\":\"Missing value\"}");
+    return;
+  }
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
     return;
   }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
@@ -130,8 +335,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   delete acc;
   request->_tempObject = nullptr;
 
-  size_t docSize = (size_t)body.length() + 2048;
-  DynamicJsonDocument inputDoc(docSize);
+  JsonDocument inputDoc;
   DeserializationError err = deserializeJson(inputDoc, body);
   if (err) {
     request->send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
@@ -143,12 +347,17 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   }
 
   JsonArray in = inputDoc.as<JsonArray>();
-  DynamicJsonDocument outDoc(2048);
+  JsonDocument outDoc;
   outDoc["ok"] = true;
   outDoc["imported"] = 0;
   outDoc["skipped"] = 0;
-  JsonArray errors = outDoc.createNestedArray("errors");
+  JsonArray errors = outDoc["errors"].to<JsonArray>();
 
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"ok\":false,\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
 
@@ -158,7 +367,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (!v.is<JsonObject>()) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = "Entry is not an object";
       }
@@ -180,14 +389,14 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (reason) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = reason;
       }
       continue;
     }
 
-    StaticJsonDocument<384> entry;
+    JsonDocument entry;
     entry["name"] = name;
     entry["protocol"] = protocol;
     entry["value"] = valueHex;
@@ -198,7 +407,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (outLen >= SAVED_CODE_MAX) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = "Entry too large";
       }
@@ -241,9 +450,14 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     valueHex = buf;
     bits = c.bits;
   }
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
   doc["name"] = name;
   doc["protocol"] = protocol;
   doc["value"] = valueHex;
@@ -259,23 +473,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
 
 // GET /saved — JSON array of saved codes
 void handleSaved(AsyncWebServerRequest *request) {
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
-  JsonDocument doc;
-  JsonArray arr = doc.to<JsonArray>();
-  for (int i = 0; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
-    JsonDocument entry;
-    DeserializationError err = deserializeJson(entry, raw);
-    if (!err) {
-      entry["index"] = i;
-      arr.add(entry);
-    }
-  }
-  savedCodes.end();
-  String out;
-  serializeJson(doc, out);
+  String out = getSavedCodesJson();
   request->send(200, "application/json", out);
 }
 
@@ -286,6 +484,11 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     return;
   }
   int index = request->getParam("index")->value().toInt();
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   if (index < 0 || index >= n) {
@@ -310,6 +513,11 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   int index = request->getParam("index")->value().toInt();
   String newName = request->getParam("name")->value();
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   if (index < 0 || index >= n) {
@@ -319,7 +527,7 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   String key = String(index);
   String raw = savedCodes.getString(key.c_str(), "{}");
-  StaticJsonDocument<384> entry;
+  JsonDocument entry;
   DeserializationError err = deserializeJson(entry, raw);
   if (err) {
     savedCodes.end();
@@ -341,6 +549,11 @@ void handleSavedRename(AsyncWebServerRequest *request) {
 
 // GET /dump — plain text for hardcoding (C-style)
 void handleDump(AsyncWebServerRequest *request) {
+  SavedCodesLock lock;
+  if (!lock) {
+    request->send(500, "text/plain", "Storage unavailable");
+    return;
+  }
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   String out = "// Saved IR codes — paste into firmware\n";
@@ -348,7 +561,7 @@ void handleDump(AsyncWebServerRequest *request) {
   for (int i = 0; i < n; i++) {
     String key = String(i);
     String raw = savedCodes.getString(key.c_str(), "{}");
-    StaticJsonDocument<384> entry;
+    JsonDocument entry;
     deserializeJson(entry, raw);
     const char *name = entry["name"] | "";
     String protocol = entry["protocol"] | "UNKNOWN";
@@ -371,7 +584,7 @@ void handleRoot(AsyncWebServerRequest *request) {
 
 // GET /last — JSON for live-update polling: { seq, human, raw, replayUrl }
 void handleLast(AsyncWebServerRequest *request) {
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["seq"] = lastCodeSeq;
   doc["human"] = lastHumanReadable;
   doc["raw"] = lastRawJson;
@@ -410,6 +623,7 @@ void handleSend(AsyncWebServerRequest *request) {
     }
     uint32_t value = strtoul(data.c_str(), nullptr, 16);
     irSender.queue(value, length, repeat);
+    printf("[IR] TX NEC 0x%s %db (no name)\n", data.c_str(), length);
     request->send(200, "text/plain", "Sent NEC " + data);
   } else {
     request->send(400, "text/plain", "Unsupported type");
@@ -419,7 +633,7 @@ void handleSend(AsyncWebServerRequest *request) {
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_CONNECT) {
     // Send current last code so new client gets state
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["event"] = "ir";
     doc["seq"] = lastCodeSeq;
     doc["human"] = lastHumanReadable;
@@ -439,7 +653,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
     if (info->opcode != WS_TEXT) return;
     if (len == 0) return;
-    StaticJsonDocument<384> req;
+    JsonDocument req;
     DeserializationError err = deserializeJson(req, data, len);
     if (err) return;
     if (!req["cmd"].is<const char *>() || String(req["cmd"].as<const char *>()) != "send") return;
@@ -449,7 +663,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     String name = req["name"] | "";
     if (stype == "nec" && sdata.length() > 0) {
       if (!isHexValue(sdata.c_str()) || length < 1 || length > 128) {
-        StaticJsonDocument<256> nack;
+        JsonDocument nack;
         nack["ok"] = false;
         nack["error"] = "Invalid hex data or length";
         String nackStr;
@@ -459,7 +673,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
       }
       uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
       irSender.queue(value, length, 1);
-      StaticJsonDocument<256> ack;
+      printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
+      JsonDocument ack;
       ack["ok"] = true;
       ack["msg"] = "Sent NEC " + sdata;
       if (name.length() > 0) ack["name"] = name;
@@ -484,13 +699,22 @@ void setupWifi() {
     delay(500);
     printf(".");
   }
-  printf("\n[IR] IP: %s\n", WiFi.localIP().toString().c_str());
+  printf("\n[IR] IP: %s", WiFi.localIP().toString().c_str());
+  uint32_t sec;
+  char cmd[BLE_SCHEDULE_CMD_NAME_MAX];
+  if (getScheduleCountdown(&sec, cmd, sizeof(cmd))) {
+    printf("  (%u s until %s)", (unsigned)sec, cmd);
+  }
+  printf("\n");
 }
 
 void setup() {
   Serial.begin(115200);
   delay(200);
   printf("[IR] --- ESP32-C3 IR Blaster boot ---\n");
+  if (!initSavedCodesMutex()) {
+    printf("[IR] WARNING: saved codes mutex unavailable; storage operations may fail\n");
+  }
 
   setupWifi();
 
@@ -530,6 +754,8 @@ void setup() {
   server.begin();
 
   printf("[IR] HTTP IR server started\n");
+
+  setupBLE();
 }
 
 void loop() {
@@ -540,7 +766,13 @@ void loop() {
   if (millis() - lastStatusPrint >= 1000) {
     lastStatusPrint = millis();
     if (WiFi.status() == WL_CONNECTED) {
-      printf("[IR] IP: %s\n", WiFi.localIP().toString().c_str());
+      printf("[IR] IP: %s", WiFi.localIP().toString().c_str());
+      uint32_t sec;
+      char cmd[BLE_SCHEDULE_CMD_NAME_MAX];
+      if (getScheduleCountdown(&sec, cmd, sizeof(cmd))) {
+        printf("  (%u s until %s)", (unsigned)sec, cmd);
+      }
+      printf("\n");
     } else {
       printf("[IR] (WiFi not connected)\n");
     }
@@ -564,7 +796,7 @@ void loop() {
     printf("[IR] %s\n", lastRawJson.c_str());
 
     if (ws.count() > 0) {
-      StaticJsonDocument<512> doc;
+      JsonDocument doc;
       doc["event"] = "ir";
       doc["seq"] = lastCodeSeq;
       doc["human"] = lastHumanReadable;
@@ -582,6 +814,8 @@ void loop() {
 
     irrecv.resume();
   }
+
+  loopBLE();
 
   // AsyncWebServer handles HTTP in background.
 }

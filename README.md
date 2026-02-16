@@ -8,6 +8,7 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 - **Send:** IR LED on GPIO 4 (via transistor); NEC codes via HTTP or WebSocket, or one-click **Send** on stored codes with large touch-friendly buttons. A modal confirms "Sent: *name*" without leaving the page.
 - **Store:** Save codes from the last-received list or enter them manually (name, protocol, value, bits). Stored in NVS across reboots. Rename and delete from the UI.
 - **Activity log:** Real-time scrollable log of IR receives and sends. Incoming signals are color-coded: green for known stored commands, amber for likely matches, grey for unknown.
+- **Bluetooth (BLE):** A bonded computer or phone can send stored IR commands over BLE without using WiFi. Passkey-protected pairing with automatic reconnection. See [docs/bluetooth.md](docs/bluetooth.md).
 - **Mobile-first UI:** Responsive layout optimized for phones (stored commands first, large buttons) with two-column grid on desktop. Frontend served from **LittleFS** as static HTML/CSS/JS; see [docs/web-interface.md](docs/web-interface.md).
 
 ## Web interface preview
@@ -49,13 +50,15 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 
 ## Project layout
 
-- **`src/main.cpp`** -- Firmware: WiFi, LittleFS, AsyncWebServer + WebSocket, IR recv/send, NVS stored codes, template processor.
+- **`src/main.cpp`** -- Firmware: WiFi, LittleFS, AsyncWebServer + WebSocket, IR recv/send, NVS stored codes, BLE integration, template processor.
+- **`src/ble_server.cpp`** / **`include/ble_server.h`** -- BLE GATT server (NimBLE): service, characteristics, bonding, advertising.
 - **`data/`** -- Frontend files served from LittleFS: `index.html`, `app.css`, `app.js`.
 - **`src/ir_utils.cpp`** / **`include/ir_utils.h`** -- Pure helper functions (URL builders, HTML escape) shared by firmware and unit tests.
 - **`test/test_ir_utils.cpp`** -- Unity unit tests for the helpers (run on device).
 - **`test/integration/test_api.py`** -- pytest integration tests for the HTTP API (run from host).
+- **`test/integration/test_ble.py`** -- pytest + bleak integration tests for the BLE GATT service (run from host).
 - **`platformio.ini`** -- PlatformIO envs: `esp32c3-ir` (firmware) and `esp32c3-test` (unit tests).
-- **`docs/`** -- Wiring, **web interface & API**, serial monitor, troubleshooting.
+- **`docs/`** -- Wiring, **web interface & API**, **Bluetooth (BLE)**, serial monitor, troubleshooting.
 
 ## HTTP API (summary)
 
@@ -79,7 +82,7 @@ Full API and UI behavior: **[docs/web-interface.md](docs/web-interface.md)**.
 
 - **PlatformIO** (CLI or Cursor/VS Code extension).
 - **Board:** ESP32-C3 (e.g. esp32-c3-devkitm-1 / Super Mini).
-- **Libraries:** IRremoteESP8266, ArduinoJson, Preferences (via `lib_deps` / framework).
+- **Libraries:** IRremoteESP8266, ArduinoJson, ESP32 BLE Arduino (built-in), Preferences (via `lib_deps` / framework).
 
 ## Testing
 
@@ -102,11 +105,23 @@ DEVICE_IP=http://<device-ip> pytest test/integration/
 
 Tests cover: `GET /`, `/ip`, `/last`, `/send`, `/saved`, `/dump`, `POST /save` (JSON body), `POST /saved/delete`, query-string save, and 404 handling.
 
+### Integration tests (BLE)
+
+A pytest + bleak suite in `test/integration/test_ble.py` connects to the device over BLE. Requires the device to be running and already paired/bonded with the host Mac.
+
+```bash
+pip install -r requirements-test.txt
+DEVICE_BLE_NAME="IR Blaster" pytest test/integration/test_ble.py -v
+```
+
+Tests cover: BLE discovery, reading saved codes, sending a stored command by index, invalid index handling, and status notifications.
+
 ## Documentation
 
 - [Hardware wiring](docs/wiring.md) -- Breadboard, parts, pinout.
 - [Web interface & API](docs/web-interface.md) -- Page layout, stored codes, live updates, activity log, full API.
 - [Serial monitor](docs/serial-monitor.md) -- Logging and `printf()`.
+- [Bluetooth (BLE)](docs/bluetooth.md) -- BLE GATT service, pairing, auto-reconnect, testing.
 - [Troubleshooting](docs/troubleshooting.md) -- Common build, upload, serial, WiFi, web UI, and IR issues.
 - [Wiring diagram](docs/assets/wiring-breadboard.svg) -- Breadboard visual reference.
 

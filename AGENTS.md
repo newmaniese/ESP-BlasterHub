@@ -9,6 +9,7 @@ ESP32-C3 IR Blaster firmware and web UI:
 - Serves a LittleFS-hosted frontend over WiFi.
 - Stores saved IR codes in NVS across reboots.
 - Supports HTTP API and WebSocket live updates.
+- BLE GATT server for sending stored commands from a bonded computer (NimBLE).
 
 ## Stack and dependencies
 
@@ -17,12 +18,14 @@ ESP32-C3 IR Blaster firmware and web UI:
 - `IRremoteESP8266`
 - `ArduinoJson`
 - `ESPAsyncWebServer` + `AsyncTCP`
+- Built-in Arduino-ESP32 BLE (Bluedroid GATT server)
 - LittleFS for static frontend assets
 
 ## Key paths
 
 - Firmware entry: `src/main.cpp`
 - Shared helpers: `include/ir_utils.h`, `src/ir_utils.cpp`
+- BLE server: `include/ble_server.h`, `src/ble_server.cpp`
 - Frontend: `data/index.html`, `data/app.css`, `data/app.js`
 - PlatformIO config: `platformio.ini`
 - Documentation: `docs/`
@@ -54,7 +57,13 @@ Host integration tests (device must be running):
 
 ```bash
 pip install -r requirements-test.txt
-DEVICE_IP=http://<device-ip> pytest test/integration/
+DEVICE_IP=http://<device-ip> pytest test/integration/test_api.py
+```
+
+BLE integration tests (device must be paired/bonded):
+
+```bash
+DEVICE_BLE_NAME="IR Blaster" pytest test/integration/test_ble.py
 ```
 
 ## Documentation index
@@ -62,5 +71,6 @@ DEVICE_IP=http://<device-ip> pytest test/integration/
 - Main index: `README.md`
 - Wiring: `docs/wiring.md`
 - Web UI and API: `docs/web-interface.md`
+- Bluetooth (BLE): `docs/bluetooth.md`
 - Serial logging: `docs/serial-monitor.md`
 - Troubleshooting: `docs/troubleshooting.md`
