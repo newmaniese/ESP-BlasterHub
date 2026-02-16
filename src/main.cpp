@@ -17,7 +17,6 @@
 #include "IrSender.h"
 #include "ble_server.h"
 #include "IrSender.h"
-#include "ble_server.h"
 
 #define HISTORY_SIZE 5
 #define SAVED_CODES_NAMESPACE "ir_saved"

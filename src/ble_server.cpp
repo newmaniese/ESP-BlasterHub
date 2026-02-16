@@ -6,7 +6,7 @@
 //   - Saved Codes  (Read)   — JSON array of stored IR commands
 //   - Send Command (Write)  — write a single byte (NVS index) to send that code
 //   - Status       (Notify) — result string after a send ("OK:<name>" or "ERR:…")
-//   - Schedule     (Write)  — JSON: arm delayed command or accept heartbeat keepalive
+//   - Schedule     (Write)  — JSON: arm delayed command or heartbeat to reset timer
 //
 // Security: bonding + MITM + Secure Connections, passkey displayed on Serial.
 // Auto-reconnect: advertising restarts on disconnect so the client reconnects.
@@ -38,11 +38,10 @@ static BLECharacteristic* pStatusChar  = nullptr;
 static BLECharacteristic* pScheduleChar = nullptr;
 static bool               deviceConnected = false;
 
-// Delayed command: run a saved code by name after delay_seconds once client disconnects.
-// Countdown starts only when client disconnects (countdownStartMs set in onDisconnect).
+// Delayed command: run a saved code by name after delay_seconds unless heartbeat resets.
 static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
 static uint32_t scheduledDelayMs   = 0;
-static unsigned long countdownStartMs = 0; // when client disconnected — countdown runs from here
+static unsigned long lastHeartbeatMs = 0;
 static bool     scheduledArmed    = false;
 
 // Helper: set Status characteristic and notify if connected.
@@ -66,10 +65,6 @@ class IRServerCallbacks : public BLEServerCallbacks {
   void onDisconnect(BLEServer* pServer) override {
     (void)pServer;
     deviceConnected = false;
-    // Start countdown only when client disconnects (N seconds until scheduled command).
-    if (scheduledArmed) {
-      countdownStartMs = millis();
-    }
     printf("[BLE] Client disconnected — restarting advertising\n");
     BLEDevice::startAdvertising();
   }
@@ -156,7 +151,7 @@ class SendCommandCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-// Schedule — JSON write: {"delay_seconds": N, "command": "Name"} to arm, or {"heartbeat": true} keepalive.
+// Schedule — JSON write: {"delay_seconds": N, "command": "Name"} to arm, or {"heartbeat": true} to reset.
 class ScheduleCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pCharacteristic) override {
     std::string val = pCharacteristic->getValue();
@@ -174,6 +169,7 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
     }
 
     if (doc["heartbeat"].is<bool>() && doc["heartbeat"].as<bool>()) {
+      lastHeartbeatMs = millis();
       printf("[BLE] Schedule: heartbeat\n");
       return;
     }
@@ -198,6 +194,7 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
       strncpy(scheduledCommandName, cmd, BLE_SCHEDULE_CMD_NAME_MAX - 1);
       scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
       scheduledDelayMs = (uint32_t)sec * 1000UL;
+      lastHeartbeatMs = millis();
       scheduledArmed = true;
       printf("[BLE] Schedule: armed %s in %u s\n", scheduledCommandName, (unsigned)sec);
       setStatus("OK:scheduled");
@@ -293,12 +290,11 @@ void setupBLE() {
 }
 
 bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_name, size_t name_max) {
-  // Countdown only runs when client is disconnected.
-  if (!scheduledArmed || scheduledCommandName[0] == '\0' || deviceConnected ||
+  if (!scheduledArmed || scheduledCommandName[0] == '\0' ||
       !out_seconds_remaining || !out_command_name || name_max == 0) {
     return false;
   }
-  unsigned long elapsed = millis() - countdownStartMs;
+  unsigned long elapsed = millis() - lastHeartbeatMs;
   if (elapsed >= scheduledDelayMs) {
     return false;  // already expired, about to fire
   }
@@ -309,9 +305,9 @@ bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_nam
 }
 
 void loopBLE() {
-  // Delayed command: countdown starts on disconnect; after delay_seconds run the scheduled command once.
-  if (scheduledArmed && scheduledCommandName[0] != '\0' && !deviceConnected &&
-      (millis() - countdownStartMs) >= scheduledDelayMs) {
+  // Delayed command: if armed and timeout elapsed since last heartbeat, run the scheduled command once.
+  if (scheduledArmed && scheduledCommandName[0] != '\0' &&
+      (millis() - lastHeartbeatMs) >= scheduledDelayMs) {
     scheduledArmed = false;
     int idx = getSavedCodeIndexByName(scheduledCommandName);
     if (idx >= 0) {
