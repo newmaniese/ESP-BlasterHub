@@ -12,6 +12,7 @@
 #include <IRutils.h>
 #include "secrets.h"
 #include "ir_utils.h"
+#include "IrSender.h"
 
 #define HISTORY_SIZE 5
 #define SAVED_CODES_NAMESPACE "ir_saved"
@@ -26,6 +27,7 @@ const uint8_t RECV_TIMEOUT_MS = 50;    // 50ms, good for most remotes
 
 IRrecv irrecv(RECV_PIN, CAPTURE_BUF_SIZE, RECV_TIMEOUT_MS, true);
 IRsend irsend(SEND_PIN);
+IrSender irSender(irsend);
 decode_results results;
 
 AsyncWebServer server(80);
@@ -407,10 +409,7 @@ void handleSend(AsyncWebServerRequest *request) {
       return;
     }
     uint32_t value = strtoul(data.c_str(), nullptr, 16);
-    for (int i = 0; i < repeat; i++) {
-      irsend.sendNEC(value, length);
-      delay(50);
-    }
+    irSender.queue(value, length, repeat);
     request->send(200, "text/plain", "Sent NEC " + data);
   } else {
     request->send(400, "text/plain", "Unsupported type");
@@ -459,7 +458,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
         return;
       }
       uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
-      irsend.sendNEC(value, length);
+      irSender.queue(value, length, 1);
       StaticJsonDocument<256> ack;
       ack["ok"] = true;
       ack["msg"] = "Sent NEC " + sdata;
@@ -534,6 +533,8 @@ void setup() {
 }
 
 void loop() {
+  irSender.loop();
+
   // Heartbeat every 1s so you always see output after opening the monitor
   static uint32_t lastStatusPrint = 0;
   if (millis() - lastStatusPrint >= 1000) {
