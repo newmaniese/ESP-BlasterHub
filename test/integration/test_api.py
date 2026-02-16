@@ -216,3 +216,59 @@ class TestNotFound:
     def test_unknown_path_returns_404(self):
         r = requests.get(url("/nonexistent"))
         assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /saved/rename
+# ---------------------------------------------------------------------------
+
+class TestSavedRename:
+    """Rename a saved code and verify it changes in /saved."""
+
+    def test_rename_success(self):
+        # 1) Save a code first
+        payload = {
+            "name": "_rename_me_",
+            "protocol": "NEC",
+            "value": "12345678",
+            "bits": 32,
+        }
+        r = requests.post(url("/save"), json=payload)
+        assert r.status_code == 200
+        saved_index = r.json()["index"]
+
+        # 2) Rename it
+        new_name = "_i_was_renamed_"
+        r2 = requests.post(url("/saved/rename"), params={
+            "index": saved_index,
+            "name": new_name
+        })
+        assert r2.status_code == 200
+        assert r2.json().get("ok") is True
+
+        # 3) Verify the name change in /saved
+        r3 = requests.get(url("/saved"))
+        items = r3.json()
+        # Find the item by index
+        renamed_item = next((it for it in items if it.get("index") == saved_index), None)
+        assert renamed_item is not None
+        assert renamed_item.get("name") == new_name
+
+        # 4) Cleanup
+        requests.post(url("/saved/delete"), params={"index": saved_index})
+
+    def test_rename_missing_params_returns_400(self):
+        # Missing name
+        r = requests.post(url("/saved/rename"), params={"index": 0})
+        assert r.status_code == 400
+        # Missing index
+        r2 = requests.post(url("/saved/rename"), params={"name": "new"})
+        assert r2.status_code == 400
+
+    def test_rename_invalid_index_returns_400(self):
+        r = requests.post(url("/saved/rename"), params={
+            "index": 999,
+            "name": "wont_work"
+        })
+        assert r.status_code == 400
+        assert "error" in r.json()
