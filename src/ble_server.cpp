@@ -18,6 +18,8 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <BLESecurity.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
 #include "ble_server.h"
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
 static uint32_t scheduledDelayMs   = 0;
 static unsigned long lastHeartbeatMs = 0;
 static bool     scheduledArmed    = false;
+static portMUX_TYPE scheduleStateMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Helper: set Status characteristic and notify if connected.
 static void setStatus(const String& msg) {
@@ -169,7 +172,10 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
     }
 
     if (doc["heartbeat"].is<bool>() && doc["heartbeat"].as<bool>()) {
-      lastHeartbeatMs = millis();
+      unsigned long nowMs = millis();
+      portENTER_CRITICAL(&scheduleStateMux);
+      lastHeartbeatMs = nowMs;
+      portEXIT_CRITICAL(&scheduleStateMux);
       printf("[BLE] Schedule: heartbeat\n");
       return;
     }
@@ -191,12 +197,19 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
         setStatus("ERR:schedule name long");
         return;
       }
-      strncpy(scheduledCommandName, cmd, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+      char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX];
+      strncpy(commandCopy, cmd, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+      commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+      uint32_t delayMs = (uint32_t)sec * 1000UL;
+      unsigned long nowMs = millis();
+      portENTER_CRITICAL(&scheduleStateMux);
+      strncpy(scheduledCommandName, commandCopy, BLE_SCHEDULE_CMD_NAME_MAX - 1);
       scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
-      scheduledDelayMs = (uint32_t)sec * 1000UL;
-      lastHeartbeatMs = millis();
+      scheduledDelayMs = delayMs;
+      lastHeartbeatMs = nowMs;
       scheduledArmed = true;
-      printf("[BLE] Schedule: armed %s in %u s\n", scheduledCommandName, (unsigned)sec);
+      portEXIT_CRITICAL(&scheduleStateMux);
+      printf("[BLE] Schedule: armed %s in %u s\n", commandCopy, (unsigned)sec);
       setStatus("OK:scheduled");
       return;
     }
@@ -290,37 +303,65 @@ void setupBLE() {
 }
 
 bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_name, size_t name_max) {
-  if (!scheduledArmed || scheduledCommandName[0] == '\0' ||
-      !out_seconds_remaining || !out_command_name || name_max == 0) {
+  if (!out_seconds_remaining || !out_command_name || name_max == 0) {
     return false;
   }
-  unsigned long elapsed = millis() - lastHeartbeatMs;
-  if (elapsed >= scheduledDelayMs) {
+
+  bool armed = false;
+  uint32_t delayMs = 0;
+  unsigned long heartbeatMs = 0;
+  char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX];
+  portENTER_CRITICAL(&scheduleStateMux);
+  armed = scheduledArmed;
+  delayMs = scheduledDelayMs;
+  heartbeatMs = lastHeartbeatMs;
+  strncpy(commandCopy, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+  commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+  portEXIT_CRITICAL(&scheduleStateMux);
+
+  if (!armed || commandCopy[0] == '\0') {
+    return false;
+  }
+
+  unsigned long elapsed = millis() - heartbeatMs;
+  if (elapsed >= delayMs) {
     return false;  // already expired, about to fire
   }
-  *out_seconds_remaining = (scheduledDelayMs - (uint32_t)elapsed + 999) / 1000;
-  strncpy(out_command_name, scheduledCommandName, name_max - 1);
+  *out_seconds_remaining = (delayMs - (uint32_t)elapsed + 999) / 1000;
+  strncpy(out_command_name, commandCopy, name_max - 1);
   out_command_name[name_max - 1] = '\0';
   return true;
 }
 
 void loopBLE() {
+  bool shouldRun = false;
+  char commandToRun[BLE_SCHEDULE_CMD_NAME_MAX];
+  unsigned long nowMs = millis();
+
   // Delayed command: if armed and timeout elapsed since last heartbeat, run the scheduled command once.
+  portENTER_CRITICAL(&scheduleStateMux);
   if (scheduledArmed && scheduledCommandName[0] != '\0' &&
-      (millis() - lastHeartbeatMs) >= scheduledDelayMs) {
+      (nowMs - lastHeartbeatMs) >= scheduledDelayMs) {
     scheduledArmed = false;
-    int idx = getSavedCodeIndexByName(scheduledCommandName);
-    if (idx >= 0) {
-      String name;
-      if (sendSavedCode(idx, name)) {
-        setStatus("OK:scheduled " + name);
-        printf("[BLE] Scheduled command executed: %s\n", name.c_str());
-      } else {
-        setStatus("ERR:scheduled send");
-      }
+    strncpy(commandToRun, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+    commandToRun[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+    shouldRun = true;
+  }
+  portEXIT_CRITICAL(&scheduleStateMux);
+
+  if (!shouldRun) return;
+
+  int idx = getSavedCodeIndexByName(commandToRun);
+  if (idx >= 0) {
+    String name;
+    if (sendSavedCode(idx, name)) {
+      setStatus("OK:scheduled " + name);
+      printf("[BLE] Scheduled command executed: %s\n", name.c_str());
     } else {
-      setStatus("ERR:scheduled not found");
-      printf("[BLE] Scheduled command not found: %s\n", scheduledCommandName);
+      setStatus("ERR:scheduled send");
     }
+  } else {
+    setStatus("ERR:scheduled not found");
+    printf("[BLE] Scheduled command not found: %s\n", commandToRun);
   }
 }
