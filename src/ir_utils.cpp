@@ -3,15 +3,11 @@
 
 String replayUrlFor(const IrCapture& c) {
   if (!c.protocol.equalsIgnoreCase("NEC")) return "";
-  char buf[16];
-  sprintf(buf, "%08lX", (unsigned long)(c.value & 0xFFFFFFFF));
-  return "/send?type=nec&data=" + String(buf) + "&length=" + String(c.bits);
+  return "/send?type=nec&data=" + uint64ToHex(c.value) + "&length=" + String(c.bits);
 }
 
 String saveUrlFor(const IrCapture& c, const String& name) {
-  char valueHex[20];
-  sprintf(valueHex, "%08lX", (unsigned long)(c.value & 0xFFFFFFFF));
-  String url = "/save?protocol=" + c.protocol + "&value=" + String(valueHex) + "&length=" + String(c.bits);
+  String url = "/save?protocol=" + c.protocol + "&value=" + uint64ToHex(c.value) + "&length=" + String(c.bits);
   if (name.length() > 0) url += "&name=" + name;
   return url;
 }

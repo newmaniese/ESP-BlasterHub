@@ -14,6 +14,7 @@
 #include "freertos/semphr.h"
 #include "secrets.h"
 #include "ir_utils.h"
+#include "hex_utils.h"
 #include "IrSender.h"
 #include "ble_server.h"
 
@@ -444,9 +445,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     }
     const IrCapture &c = history[0];
     protocol = c.protocol;
-    char buf[20];
-    sprintf(buf, "%08lX", (unsigned long)(c.value & 0xFFFFFFFF));
-    valueHex = buf;
+    valueHex = uint64ToHex(c.value);
     bits = c.bits;
   }
   SavedCodesLock lock;
@@ -640,9 +639,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     doc["replayUrl"] = (historyLen > 0) ? replayUrlFor(history[0]) : "";
     if (historyLen > 0) {
       doc["protocol"] = history[0].protocol;
-      char valHex[20];
-      sprintf(valHex, "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
-      doc["value"] = valHex;
+      doc["value"] = uint64ToHex(history[0].value);
       doc["bits"] = history[0].bits;
     }
     String out;
@@ -802,9 +799,7 @@ void loop() {
       doc["raw"] = lastRawJson;
       doc["replayUrl"] = replayUrlFor(history[0]);
       doc["protocol"] = history[0].protocol;
-      char valHex[20];
-      sprintf(valHex, "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
-      doc["value"] = valHex;
+      doc["value"] = uint64ToHex(history[0].value);
       doc["bits"] = history[0].bits;
       String out;
       serializeJson(doc, out);
