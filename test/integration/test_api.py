@@ -109,6 +109,24 @@ class TestSend:
         assert r.status_code == 400
         assert "Unsupported" in r.text
 
+    def test_send_invalid_repeat(self):
+        r = requests.get(url("/send"), params={
+            "type": "nec",
+            "data": "FF827D",
+            "repeat": 25,
+        })
+        assert r.status_code == 400
+        assert "Invalid repeat" in r.text
+
+    def test_send_invalid_length(self):
+        r = requests.get(url("/send"), params={
+            "type": "nec",
+            "data": "FF827D",
+            "length": 150,
+        })
+        assert r.status_code == 400
+        assert "Invalid length" in r.text
+
 
 # ---------------------------------------------------------------------------
 # GET /saved
