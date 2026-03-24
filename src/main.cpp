@@ -21,6 +21,10 @@
 #define SAVED_CODES_NAMESPACE "ir_saved"
 #define SAVED_CODE_MAX 512   // NVS value limit ~508; keep JSON under this
 
+#define MAX_PARAM_PROTOCOL 16
+#define MAX_PARAM_DATA 128
+#define MAX_PARAM_NAME 64
+
 const uint16_t RECV_PIN = 10;     // IR receiver on GPIO10 (ESP32-C3)
 const uint16_t SEND_PIN = 4;      // IR LED on GPIO4
 
@@ -431,11 +435,22 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
 // GET /save or POST with query params: save last code or specific code via query params
 void handleSaveGet(AsyncWebServerRequest *request) {
   String name = request->hasParam("name") ? request->getParam("name")->value() : "";
+  if (name.length() > MAX_PARAM_NAME) {
+    request->send(400, "text/plain", "Name too long");
+    return;
+  }
+
   String protocol, valueHex;
   uint16_t bits = 32;
   if (request->hasParam("protocol") && request->hasParam("value")) {
     protocol = request->getParam("protocol")->value();
     valueHex = request->getParam("value")->value();
+
+    if (protocol.length() > MAX_PARAM_PROTOCOL || valueHex.length() > MAX_PARAM_DATA) {
+      request->send(400, "text/plain", "Input too long");
+      return;
+    }
+
     if (request->hasParam("length")) bits = (uint16_t)request->getParam("length")->value().toInt();
   } else {
     if (historyLen == 0) {
@@ -512,6 +527,12 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   int index = request->getParam("index")->value().toInt();
   String newName = request->getParam("name")->value();
+
+  if (newName.length() > MAX_PARAM_NAME) {
+    request->send(400, "application/json", "{\"error\":\"Name too long\"}");
+    return;
+  }
+
   SavedCodesLock lock;
   if (!lock) {
     request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
@@ -603,6 +624,12 @@ void handleSend(AsyncWebServerRequest *request) {
 
   String type = request->getParam("type")->value();
   String data = request->getParam("data")->value();
+
+  if (type.length() > MAX_PARAM_PROTOCOL || data.length() > MAX_PARAM_DATA) {
+    request->send(400, "text/plain", "Input too long");
+    return;
+  }
+
   int length = request->hasParam("length") ? request->getParam("length")->value().toInt() : 32;
   int repeat = request->hasParam("repeat") ? request->getParam("repeat")->value().toInt() : 1;
 
@@ -660,6 +687,17 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     String sdata = req["data"] | "";
     int length = req["length"] | 32;
     String name = req["name"] | "";
+
+    if (stype.length() > MAX_PARAM_PROTOCOL || sdata.length() > MAX_PARAM_DATA || name.length() > MAX_PARAM_NAME) {
+      JsonDocument ack;
+      ack["ok"] = false;
+      ack["error"] = "Input too long";
+      String ackStr;
+      serializeJson(ack, ackStr);
+      client->text(ackStr);
+      return;
+    }
+
     if (stype == "nec") {
       if (sdata.length() > 0 && isHexValue(sdata.c_str()) && length > 0 && length <= 128) {
         uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
