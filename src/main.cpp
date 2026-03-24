@@ -125,7 +125,14 @@ String getSavedCodesJsonCompact() {
   if (!lock) return "[]";
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
-  String out = "[";
+
+  String out;
+  out.reserve(BLE_SAVED_CODES_MAX_LEN);
+  out = "[";
+
+  String frag;
+  frag.reserve(128);
+
   int i = 0;
   for (; i < n; i++) {
     String key = String(i);
@@ -135,7 +142,7 @@ String getSavedCodesJsonCompact() {
     const char *name = entry["name"] | "";
 
     // Build this entry in a fragment so we can check length before appending.
-    String frag;
+    frag = "";
     if (out.length() > 1) frag += ",";
     frag += "{\"i\":";
     frag += String(i);
