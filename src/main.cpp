@@ -445,7 +445,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     const IrCapture &c = history[0];
     protocol = c.protocol;
     char buf[20];
-    sprintf(buf, "%08lX", (unsigned long)(c.value & 0xFFFFFFFF));
+    snprintf(buf, sizeof(buf), "%08lX", (unsigned long)(c.value & 0xFFFFFFFF));
     valueHex = buf;
     bits = c.bits;
   }
@@ -641,7 +641,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     if (historyLen > 0) {
       doc["protocol"] = history[0].protocol;
       char valHex[20];
-      sprintf(valHex, "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
+      snprintf(valHex, sizeof(valHex), "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
       doc["value"] = valHex;
       doc["bits"] = history[0].bits;
     }
@@ -726,6 +726,10 @@ void setup() {
   irrecv.enableIRIn();
   irsend.begin();
 
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
+
   server.on("/", HTTP_GET, handleRoot);
   // Serve static assets from LittleFS (app.css, app.js, etc.)
   server.serveStatic("/app.css", LittleFS, "/app.css").setCacheControl("max-age=86400");
@@ -749,7 +753,13 @@ void setup() {
   server.on("/saved/rename", HTTP_POST, handleSavedRename);
   server.on("/dump", HTTP_GET, handleDump);
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) { request->send(204, "text/plain", ""); });
-  server.onNotFound([](AsyncWebServerRequest *request) { request->send(404, "text/plain", "Not found"); });
+  server.onNotFound([](AsyncWebServerRequest *request) {
+    if (request->method() == HTTP_OPTIONS) {
+      request->send(200);
+    } else {
+      request->send(404, "text/plain", "Not found");
+    }
+  });
   server.begin();
 
   printf("[IR] HTTP IR server started\n");
@@ -803,7 +813,7 @@ void loop() {
       doc["replayUrl"] = replayUrlFor(history[0]);
       doc["protocol"] = history[0].protocol;
       char valHex[20];
-      sprintf(valHex, "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
+      snprintf(valHex, sizeof(valHex), "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
       doc["value"] = valHex;
       doc["bits"] = history[0].bits;
       String out;
