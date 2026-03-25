@@ -729,7 +729,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
         serializeJson(ack, ackStr);
         client->text(ackStr);
       } else {
-        StaticJsonDocument<256> err;
+        JsonDocument err;
         err["ok"] = false;
         err["error"] = "Invalid data or length";
         String errStr;
