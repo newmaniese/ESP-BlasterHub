@@ -65,13 +65,12 @@ function matchSaved(protocol, value, bits) {
   var b = parseInt(bits, 10) || 0;
   var exact = null, likely = null;
 
-  for (var i = 0; i < savedIndex.length; i++) {
+  for (var i = 0, len = savedIndex.length; i < len; i++) {
     var s = savedIndex[i];
-    var sp = (s.protocol || '').toUpperCase();
-    var sv = (s.value || '').toUpperCase();
-    var sb = parseInt(s.bits, 10) || 0;
-    if (sp === proto && sv === val && sb === b) { exact = s; break; }
-    if (sp === proto && sv === val && !likely) { likely = s; }
+    if (s._uProto === proto && s._uVal === val) {
+      if (s._iBits === b) { exact = s; break; }
+      if (!likely) likely = s;
+    }
   }
   return exact ? { match: 'exact', item: exact }
        : likely ? { match: 'likely', item: likely }
@@ -94,13 +93,18 @@ function matchLabel(m, human) {
 // Render stored-commands list
 // ---------------------------------------------------------------------------
 function renderSavedList(items) {
-  savedIndex = items || [];
+  savedIndex = (items || []).map(function (it) {
+    it._uProto = (it.protocol || '').toUpperCase();
+    it._uVal = (it.value || '').toUpperCase();
+    it._iBits = parseInt(it.bits, 10) || 0;
+    return it;
+  });
   var el = document.getElementById('saved-list');
   var h = '';
-  if (!items || !items.length) {
+  if (!savedIndex || !savedIndex.length) {
     h = '<p id="saved-empty"><em>None yet. Save codes from the form or from received signals.</em></p>';
   } else {
-    items.forEach(function (it) {
+    savedIndex.forEach(function (it) {
       var idx = it.index;
       var name = (it.name && it.name.length) ? it.name : ('Code ' + idx);
       var protocol = it.protocol || 'UNKNOWN';
