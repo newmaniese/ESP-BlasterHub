@@ -125,8 +125,12 @@ String getSavedCodesJsonCompact() {
   if (!lock) return "[]";
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
-  String out = "[";
+  String out;
+  out.reserve(BLE_SAVED_CODES_MAX_LEN);
+  out = "[";
   int i = 0;
+  String frag;
+  frag.reserve(128);
   for (; i < n; i++) {
     String key = String(i);
     String raw = savedCodes.getString(key.c_str(), "{}");
@@ -135,33 +139,36 @@ String getSavedCodesJsonCompact() {
     const char *name = entry["name"] | "";
 
     // Build this entry in a fragment so we can check length before appending.
-    String frag;
+    frag = "";
     if (out.length() > 1) frag += ",";
     frag += "{\"i\":";
-    frag += String(i);
+    frag += i;
     frag += ",\"n\":\"";
-    for (const char *p = name; *p; p++) {
-      unsigned char c = (unsigned char)*p;
-      if (c == '"' || c == '\\') {
-        frag += '\\';
-        frag += (char)c;
-      } else if (c == '\b') {
-        frag += "\\b";
-      } else if (c == '\t') {
-        frag += "\\t";
-      } else if (c == '\n') {
-        frag += "\\n";
-      } else if (c == '\f') {
-        frag += "\\f";
-      } else if (c == '\r') {
-        frag += "\\r";
-      } else if (c < 0x20) {
-        frag += "\\u";
-        char hex[5];
-        snprintf(hex, sizeof(hex), "%04x", c);
-        frag += hex;
-      } else {
-        frag += (char)c;
+    const char *p = name;
+    while (*p) {
+      const char *start = p;
+      // Skip characters that don't need escaping
+      while (*p && *p != '"' && *p != '\\' && (unsigned char)*p >= 0x20) {
+        p++;
+      }
+      if (p > start) {
+        frag.concat(start, p - start);
+      }
+      if (*p) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"') frag += "\\\"";
+        else if (c == '\\') frag += "\\\\";
+        else if (c == '\b') frag += "\\b";
+        else if (c == '\t') frag += "\\t";
+        else if (c == '\n') frag += "\\n";
+        else if (c == '\f') frag += "\\f";
+        else if (c == '\r') frag += "\\r";
+        else {
+          char hex[7];
+          snprintf(hex, sizeof(hex), "\\u%04x", c);
+          frag += hex;
+        }
+        p++;
       }
     }
     frag += "\"}";
@@ -173,7 +180,7 @@ String getSavedCodesJsonCompact() {
   if (i < n) {
     if (out.length() > 1) out += ",";
     out += "{\"i\":-1,\"n\":\"\",\"_truncated\":true,\"_total\":";
-    out += String(n);
+    out += n;
     out += "}";
   }
   out += "]";
