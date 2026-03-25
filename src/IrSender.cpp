@@ -54,3 +54,8 @@ void IrSender::loop() {
 bool IrSender::isActive() const {
     return _active;
 }
+
+bool IrSender::isJobPending() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _jobPending;
+}

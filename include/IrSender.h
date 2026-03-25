@@ -22,6 +22,9 @@ public:
     // Check if currently busy sending
     bool isActive() const;
 
+    // Check if a job is currently queued and waiting to be processed by loop()
+    bool isJobPending() const;
+
 private:
     IRsend& _irsend;
 
