@@ -20,6 +20,10 @@
 #include <BLESecurity.h>
 #include "ble_server.h"
 
+#if BLE_USE_PASSKEY && !defined(BLE_PASSKEY)
+#error "BLE_PASSKEY must be defined (e.g. in secrets.h) when BLE_USE_PASSKEY is enabled"
+#endif
+
 // ---------------------------------------------------------------------------
 // External helpers defined in main.cpp
 // ---------------------------------------------------------------------------
@@ -221,6 +225,12 @@ static ScheduleCallbacks    scheduleCb;
 void setupBLE() {
   printf("[BLE] Initializing BLE...\n");
 
+#if BLE_USE_PASSKEY
+  if (BLE_PASSKEY > 999999) {
+    printf("[BLE] WARNING: BLE_PASSKEY %u is greater than 999999; only the last 6 digits will be used.\n", (unsigned)BLE_PASSKEY);
+  }
+#endif
+
   BLEDevice::init(BLE_DEVICE_NAME);
   BLEDevice::setMTU(512);
 
@@ -231,9 +241,9 @@ void setupBLE() {
   BLESecurity *pSecurity = new BLESecurity();
   pSecurity->setAuthenticationMode(BLE_USE_PASSKEY ? ESP_LE_AUTH_REQ_SC_MITM_BOND : ESP_LE_AUTH_REQ_SC_BOND);
   pSecurity->setCapability(BLE_USE_PASSKEY ? ESP_IO_CAP_OUT : ESP_IO_CAP_NONE);  // OUT = display passkey; NONE = Just Works
-  if (BLE_USE_PASSKEY) {
-    pSecurity->setStaticPIN(BLE_PASSKEY);
-  }
+#if BLE_USE_PASSKEY
+  pSecurity->setStaticPIN(BLE_PASSKEY);
+#endif
   pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   pSecurity->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
 

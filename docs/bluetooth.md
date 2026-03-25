@@ -8,7 +8,7 @@ The IR Blaster exposes a BLE GATT service that lets a paired computer (or phone)
 
 - **Transport:** Bluetooth Low Energy 5.0 (ESP32-C3 supports BLE only, not Classic Bluetooth).
 - **Library:** Built-in Arduino-ESP32 BLE (Bluedroid stack). The `huge_app.csv` partition scheme provides enough flash for BLE + WiFi + IRremote.
-- **Security:** Bonding + encryption (LE Secure Connections). By default pairing is **Just Works** (no passkey). You can enable passkey entry in [`include/ble_server.h`](../include/ble_server.h) by setting `BLE_USE_PASSKEY` to `1`.
+- **Security:** Bonding + encryption (LE Secure Connections). By default pairing is **Just Works** (no passkey). You can enable passkey entry in [`src/secrets.h`](../src/secrets.h.example) by setting `BLE_USE_PASSKEY` to `1` and defining a `BLE_PASSKEY`.
 - **Reconnection:** The ESP32 restarts advertising after any disconnect, so a bonded client reconnects automatically when back in range.
 
 BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue to work normally.
@@ -115,7 +115,7 @@ sequenceDiagram
 1. Power on the ESP32. It begins advertising as **"IR Blaster"**.
 2. On your Mac (or phone), scan for BLE devices. You will see "IR Blaster" with the service UUID `e97a0001-…`.
 3. Connect. With the default **Just Works** mode (`BLE_USE_PASSKEY` = 0), no passkey is required — pairing completes automatically and the link is encrypted and bonded.
-4. If you have enabled passkey mode (`BLE_USE_PASSKEY` = 1 in `include/ble_server.h`), the ESP32 displays a 6-digit passkey on the serial monitor; enter it in the pairing dialog on your Mac/phone.
+4. If you have enabled passkey mode (`BLE_USE_PASSKEY` = 1 in `src/secrets.h`), the ESP32 displays a 6-digit passkey on the serial monitor; enter it in the pairing dialog on your Mac/phone.
 5. Once paired, the bond keys are stored in NVS on both devices.
 
 ### Subsequent connections
@@ -203,7 +203,7 @@ The device must be powered on, advertising, and already bonded with the Mac runn
 
 | File | Purpose |
 |------|---------|
-| [`include/ble_server.h`](../include/ble_server.h) | UUIDs, device name, `BLE_USE_PASSKEY` / passkey, public API (`setupBLE`, `loopBLE`) |
+| [`include/ble_server.h`](../include/ble_server.h) | UUIDs, device name, public API (`setupBLE`, `loopBLE`) |
 | [`src/ble_server.cpp`](../src/ble_server.cpp) | Bluedroid GATT server: service, characteristics, security, callbacks, Schedule (delayed command + heartbeat) |
 | [`src/main.cpp`](../src/main.cpp) | `sendSavedCode()` and `getSavedCodesJson()` shared helpers; `setupBLE()` called from `setup()` |
 | [`test/integration/test_ble.py`](../test/integration/test_ble.py) | pytest + bleak integration tests |
