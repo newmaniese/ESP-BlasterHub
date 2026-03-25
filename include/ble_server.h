@@ -8,10 +8,15 @@
 #define BLE_CHAR_STATUS_UUID     "e97a0004-c116-4a63-a60f-0e9b4d3648f3"
 #define BLE_CHAR_SCHEDULE_UUID   "e97a0005-c116-4a63-a60f-0e9b4d3648f3"
 
+#include "secrets.h"
+
 #define BLE_DEVICE_NAME          "IR Blaster"
-// Pairing: "Just Works" (no passkey). Set to 1 to require passkey entry (ESP_LE_AUTH_REQ_SC_MITM_BOND).
+
+// Pairing: "Just Works" (no passkey) by default.
+// To require a passkey, #define BLE_USE_PASSKEY 1 in src/secrets.h.
+#ifndef BLE_USE_PASSKEY
 #define BLE_USE_PASSKEY           0
-#define BLE_PASSKEY               123456  // used only when BLE_USE_PASSKEY is 1
+#endif
 
 #define BLE_SCHEDULE_CMD_NAME_MAX 32   // max length of scheduled command name
 // Max delay_seconds so that delay_seconds * 1000 fits in uint32_t (avoids overflow).
