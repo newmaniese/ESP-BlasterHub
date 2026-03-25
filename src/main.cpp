@@ -44,6 +44,9 @@ IrCapture history[HISTORY_SIZE];
 int historyLen = 0;
 
 Preferences savedCodes;
+static std::vector<String> g_savedCodesCache;
+static bool g_cacheLoaded = false;
+
 // BLE callbacks and AsyncWebServer handlers run on different tasks, so NVS access
 // through this shared Preferences instance must be serialized.
 static SemaphoreHandle_t savedCodesMutex = nullptr;
@@ -80,36 +83,45 @@ private:
   bool locked;
 };
 
+// Must be called with SavedCodesLock held.
+static void ensureCacheLoaded() {
+  if (g_cacheLoaded) return;
+  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
+  int n = savedCodes.getInt("n", 0);
+  g_savedCodesCache.clear();
+  g_savedCodesCache.reserve(n);
+  for (int i = 0; i < n; i++) {
+    g_savedCodesCache.push_back(savedCodes.getString(String(i).c_str(), "{}"));
+  }
+  savedCodes.end();
+  g_cacheLoaded = true;
+}
+
 int getSavedCount() {
   SavedCodesLock lock;
   if (!lock) return 0;
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
-  savedCodes.end();
-  return n;
+  ensureCacheLoaded();
+  return (int)g_savedCodesCache.size();
 }
 
 // Build the JSON array of all saved codes (shared by HTTP and BLE).
 String getSavedCodesJson() {
   SavedCodesLock lock;
   if (!lock) return "[]";
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
+  ensureCacheLoaded();
+  int n = (int)g_savedCodesCache.size();
   JsonDocument doc;
   JsonArray arr = doc.to<JsonArray>();
   for (int i = 0; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
     JsonObject obj = arr.add<JsonObject>();
     JsonDocument entry;
-    deserializeJson(entry, raw);
+    deserializeJson(entry, g_savedCodesCache[i]);
     obj["index"] = i;
     obj["name"] = entry["name"].as<const char *>();
     obj["protocol"] = entry["protocol"].as<const char *>();
     obj["value"] = entry["value"].as<const char *>();
     obj["bits"] = entry["bits"].as<uint16_t>();
   }
-  savedCodes.end();
   String out;
   serializeJson(doc, out);
   return out;
@@ -123,15 +135,13 @@ static const size_t BLE_SAVED_TRUNCATED_SUFFIX_LEN = 50;
 String getSavedCodesJsonCompact() {
   SavedCodesLock lock;
   if (!lock) return "[]";
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
+  ensureCacheLoaded();
+  int n = (int)g_savedCodesCache.size();
   String out = "[";
   int i = 0;
   for (; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
     JsonDocument entry;
-    deserializeJson(entry, raw);
+    deserializeJson(entry, g_savedCodesCache[i]);
     const char *name = entry["name"] | "";
 
     // Build this entry in a fragment so we can check length before appending.
@@ -177,7 +187,6 @@ String getSavedCodesJsonCompact() {
     out += "}";
   }
   out += "]";
-  savedCodes.end();
   return out;
 }
 
@@ -186,20 +195,15 @@ int getSavedCodeIndexByName(const char *name) {
   if (!name || !*name) return -1;
   SavedCodesLock lock;
   if (!lock) return -1;
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
-  for (int i = 0; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
+  ensureCacheLoaded();
+  for (size_t i = 0; i < g_savedCodesCache.size(); i++) {
     JsonDocument entry;
-    if (deserializeJson(entry, raw)) continue;
+    if (deserializeJson(entry, g_savedCodesCache[i])) continue;
     const char *stored = entry["name"] | "";
     if (strcasecmp(stored, name) == 0) {
-      savedCodes.end();
-      return i;
+      return (int)i;
     }
   }
-  savedCodes.end();
   return -1;
 }
 
@@ -213,16 +217,12 @@ bool sendSavedCode(int index, String &outName) {
       outName = "";
       return false;
     }
-    savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-    int n = savedCodes.getInt("n", 0);
-    if (index < 0 || index >= n) {
-      savedCodes.end();
+    ensureCacheLoaded();
+    if (index < 0 || index >= (int)g_savedCodesCache.size()) {
       outName = "";
       return false;
     }
-    String key = String(index);
-    raw = savedCodes.getString(key.c_str(), "{}");
-    savedCodes.end();
+    raw = g_savedCodesCache[index];
   }
 
   JsonDocument entry;
@@ -294,8 +294,9 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
     request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
     return;
   }
+  ensureCacheLoaded();
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
+  int n = (int)g_savedCodesCache.size();
   JsonObject obj = doc.to<JsonObject>();
   obj["name"] = name;
   obj["protocol"] = protocol;
@@ -312,6 +313,7 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
+  g_savedCodesCache.push_back(String(buf));
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -357,8 +359,9 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     request->send(500, "application/json", "{\"ok\":false,\"error\":\"Storage unavailable\"}");
     return;
   }
+  ensureCacheLoaded();
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
+  int n = (int)g_savedCodesCache.size();
 
   const int maxErrors = 12;
   for (size_t i = 0; i < in.size(); i++) {
@@ -415,6 +418,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
 
     String key = String(n);
     savedCodes.putString(key.c_str(), buf);
+    g_savedCodesCache.push_back(String(buf));
     n++;
     outDoc["imported"] = (int)outDoc["imported"] + 1;
   }
@@ -454,8 +458,9 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
     return;
   }
+  ensureCacheLoaded();
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
+  int n = (int)g_savedCodesCache.size();
   JsonDocument doc;
   doc["name"] = name;
   doc["protocol"] = protocol;
@@ -467,6 +472,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
+  g_savedCodesCache.push_back(String(buf));
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -488,19 +494,22 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
     return;
   }
+  ensureCacheLoaded();
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
+  int n = (int)g_savedCodesCache.size();
   if (index < 0 || index >= n) {
     savedCodes.end();
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
   for (int i = index; i < n - 1; i++) {
-    String nextRaw = savedCodes.getString(String(i + 1).c_str(), "{}");
-    savedCodes.putString(String(i).c_str(), nextRaw);
+    String nextRaw = g_savedCodesCache[i + 1];
+    savedCodes.putString(String(i).c_str(), nextRaw.c_str());
   }
+  savedCodes.remove(String(n - 1).c_str());
   savedCodes.putInt("n", n - 1);
   savedCodes.end();
+  g_savedCodesCache.erase(g_savedCodesCache.begin() + index);
   request->send(200, "application/json", "{\"ok\":true,\"remaining\":" + String(n - 1) + "}");
 }
 
@@ -517,15 +526,16 @@ void handleSavedRename(AsyncWebServerRequest *request) {
     request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
     return;
   }
+  ensureCacheLoaded();
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
+  int n = (int)g_savedCodesCache.size();
   if (index < 0 || index >= n) {
     savedCodes.end();
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
   String key = String(index);
-  String raw = savedCodes.getString(key.c_str(), "{}");
+  String raw = g_savedCodesCache[index];
   JsonDocument entry;
   DeserializationError err = deserializeJson(entry, raw);
   if (err) {
@@ -543,6 +553,7 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   savedCodes.putString(key.c_str(), buf);
   savedCodes.end();
+  g_savedCodesCache[index] = String(buf);
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
 }
 
@@ -553,15 +564,13 @@ void handleDump(AsyncWebServerRequest *request) {
     request->send(500, "text/plain", "Storage unavailable");
     return;
   }
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
+  ensureCacheLoaded();
+  int n = (int)g_savedCodesCache.size();
   String out = "// Saved IR codes — paste into firmware\n";
   out += "// Count: " + String(n) + "\n\n";
   for (int i = 0; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
     JsonDocument entry;
-    deserializeJson(entry, raw);
+    deserializeJson(entry, g_savedCodesCache[i]);
     const char *name = entry["name"] | "";
     String protocol = entry["protocol"] | "UNKNOWN";
     const char *valueHex = entry["value"] | "0";
@@ -572,7 +581,6 @@ void handleDump(AsyncWebServerRequest *request) {
     else
       out += "// irsend.send... (unsupported protocol); value=0x" + String(valueHex) + " " + String(name) + "\n";
   }
-  savedCodes.end();
   request->send(200, "text/plain", out);
 }
 
