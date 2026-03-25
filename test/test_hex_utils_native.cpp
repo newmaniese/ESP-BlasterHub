@@ -16,6 +16,9 @@ void test_isHexValue_invalid(void) {
   TEST_ASSERT_FALSE(isHexValue(" "));
   TEST_ASSERT_FALSE(isHexValue("-1"));
   TEST_ASSERT_FALSE(isHexValue("."));
+  TEST_ASSERT_FALSE(isHexValue("123 45"));
+  TEST_ASSERT_FALSE(isHexValue("ABC "));
+  TEST_ASSERT_FALSE(isHexValue(" ABC"));
 }
 
 void test_isHexValue_empty(void) {
