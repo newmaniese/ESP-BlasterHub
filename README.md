@@ -88,7 +88,7 @@ Full API and UI behavior: **[docs/web-interface.md](docs/web-interface.md)**.
 
 ### Unit tests (on device)
 
-Pure helper functions (`replayUrlFor`, `saveUrlFor`, `sendUrlForSaved`, `escapeHtml`) are extracted into `include/ir_utils.h` / `src/ir_utils.cpp` and tested with Unity on the ESP32-C3. The `esp32c3-test` env builds only the helpers (no WiFi, IR, or NVS).
+Pure helper functions (`replayUrlFor`, `saveUrlFor`, `escapeHtml`) are extracted into `include/ir_utils.h` / `src/ir_utils.cpp` and tested with Unity on the ESP32-C3. The `esp32c3-test` env builds only the helpers (no WiFi, IR, or NVS).
 
 ```bash
 pio test -e esp32c3-test
