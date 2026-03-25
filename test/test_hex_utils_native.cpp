@@ -1,6 +1,11 @@
 #include <unity.h>
+#include "Arduino.h"
+#include "IrSender.h"
+#include "IRsend.h"
 #include "hex_utils.h"
 #include <stddef.h> // for NULL
+
+unsigned long mock_millis = 0;
 
 void test_isHexValue_valid(void) {
   TEST_ASSERT_TRUE(isHexValue("0123456789ABCDEF"));
@@ -35,15 +40,57 @@ void test_isHexValue_prefix(void) {
   TEST_ASSERT_FALSE(isHexValue("0XABC"));
 }
 
-void setUp(void) {}
+void test_IrSender_isActive_basic(void) {
+  IRsend mockIr;
+  IrSender sender(mockIr);
+
+  TEST_ASSERT_FALSE(sender.isActive());
+
+  sender.queue(0x12345678, 32, 2);
+  TEST_ASSERT_FALSE(sender.isActive());
+
+  sender.loop();
+  TEST_ASSERT_TRUE(sender.isActive());
+  TEST_ASSERT_EQUAL(1, mockIr.sendCount);
+
+  sender.loop();
+  TEST_ASSERT_TRUE(sender.isActive());
+  TEST_ASSERT_EQUAL(1, mockIr.sendCount);
+
+  mock_millis += 60;
+  sender.loop();
+  TEST_ASSERT_FALSE(sender.isActive());
+  TEST_ASSERT_EQUAL(2, mockIr.sendCount);
+}
+
+void test_IrSender_interruption(void) {
+  IRsend mockIr;
+  IrSender sender(mockIr);
+
+  sender.queue(0xAAAA, 16, 10);
+  sender.loop();
+  TEST_ASSERT_TRUE(sender.isActive());
+  TEST_ASSERT_EQUAL(1, mockIr.sendCount);
+  TEST_ASSERT_EQUAL(0xAAAA, mockIr.lastData);
+
+  sender.queue(0xBBBB, 16, 1);
+  sender.loop();
+  TEST_ASSERT_FALSE(sender.isActive());
+  TEST_ASSERT_EQUAL(2, mockIr.sendCount);
+  TEST_ASSERT_EQUAL(0xBBBB, mockIr.lastData);
+}
+
+void setUp(void) { mock_millis = 0; }
 void tearDown(void) {}
 
 int main(void) {
-    UNITY_BEGIN();
-    RUN_TEST(test_isHexValue_valid);
-    RUN_TEST(test_isHexValue_invalid);
-    RUN_TEST(test_isHexValue_empty);
-    RUN_TEST(test_isHexValue_null);
-    RUN_TEST(test_isHexValue_prefix);
-    return UNITY_END();
+  UNITY_BEGIN();
+  RUN_TEST(test_isHexValue_valid);
+  RUN_TEST(test_isHexValue_invalid);
+  RUN_TEST(test_isHexValue_empty);
+  RUN_TEST(test_isHexValue_null);
+  RUN_TEST(test_isHexValue_prefix);
+  RUN_TEST(test_IrSender_isActive_basic);
+  RUN_TEST(test_IrSender_interruption);
+  return UNITY_END();
 }
