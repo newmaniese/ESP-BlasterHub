@@ -39,12 +39,55 @@ IrCapture history[HISTORY_SIZE];
 int historyLen = 0;
 
 Preferences savedCodes;
+#define SAVED_CODES_FILE "/saved_codes.json"
+
+// Helpers for LittleFS-based JSON storage
+JsonDocument loadSavedCodes() {
+  JsonDocument doc;
+  File file = LittleFS.open(SAVED_CODES_FILE, "r");
+  if (file) {
+    deserializeJson(doc, file);
+    file.close();
+  }
+  if (!doc.is<JsonArray>()) doc.to<JsonArray>();
+  return doc;
+}
+
+void saveSavedCodes(const JsonDocument& doc) {
+  File file = LittleFS.open(SAVED_CODES_FILE, "w");
+  if (file) {
+    serializeJson(doc, file);
+    file.close();
+  }
+}
+
+void migrateNvsToLittleFS() {
+  savedCodes.begin(SAVED_CODES_NAMESPACE, false);
+  if (savedCodes.getBool("migrated", false)) {
+    savedCodes.end();
+    return;
+  }
+
+  int n = savedCodes.getInt("n", 0);
+  if (n > 0) {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    for (int i = 0; i < n; i++) {
+      String raw = savedCodes.getString(String(i).c_str(), "{}");
+      JsonDocument entry;
+      deserializeJson(entry, raw);
+      arr.add(entry);
+    }
+    saveSavedCodes(doc);
+    printf("[IR] Migrated %d codes from NVS to LittleFS\n", n);
+  }
+  savedCodes.putBool("migrated", true);
+  savedCodes.end();
+}
 
 int getSavedCount() {
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
-  savedCodes.end();
-  return n;
+  JsonDocument doc = loadSavedCodes();
+  return doc.size();
 }
 
 // Template processor for LittleFS pages — replaces %PLACEHOLDER% tokens.
@@ -74,38 +117,38 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   delete acc;
   request->_tempObject = nullptr;
 
-  StaticJsonDocument<384> doc;
-  DeserializationError err = deserializeJson(doc, body);
+  JsonDocument inputDoc;
+  DeserializationError err = deserializeJson(inputDoc, body);
   if (err) {
     request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
     return;
   }
-  const char *name = doc["name"] | "";
-  const char *protocol = doc["protocol"] | "UNKNOWN";
-  const char *valueHex = doc["value"];
-  uint16_t bits = doc["bits"] | 32;
+  const char *name = inputDoc["name"] | "";
+  const char *protocol = inputDoc["protocol"] | "UNKNOWN";
+  const char *valueHex = inputDoc["value"];
+  uint16_t bits = inputDoc["bits"] | 32;
   if (!valueHex) {
     request->send(400, "application/json", "{\"error\":\"Missing value\"}");
     return;
   }
-  savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
-  JsonObject obj = doc.to<JsonObject>();
+
+  // Check size of this entry before adding
+  if (measureJson(inputDoc) >= SAVED_CODE_MAX) {
+    request->send(413, "application/json", "{\"error\":\"Code too large\"}");
+    return;
+  }
+
+  JsonDocument codes = loadSavedCodes();
+  JsonArray arr = codes.as<JsonArray>();
+  int n = arr.size();
+
+  JsonObject obj = arr.add<JsonObject>();
   obj["name"] = name;
   obj["protocol"] = protocol;
   obj["value"] = valueHex;
   obj["bits"] = bits;
-  char buf[SAVED_CODE_MAX];
-  size_t outLen = serializeJson(doc, buf, sizeof(buf));
-  if (outLen >= SAVED_CODE_MAX) {
-    savedCodes.end();
-    request->send(413, "application/json", "{\"error\":\"Code too large\"}");
-    return;
-  }
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
-  savedCodes.putInt("n", n + 1);
-  savedCodes.end();
+
+  saveSavedCodes(codes);
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -141,14 +184,14 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   }
 
   JsonArray in = inputDoc.as<JsonArray>();
-  DynamicJsonDocument outDoc(2048);
+  JsonDocument outDoc;
   outDoc["ok"] = true;
   outDoc["imported"] = 0;
   outDoc["skipped"] = 0;
-  JsonArray errors = outDoc.createNestedArray("errors");
+  JsonArray errors = outDoc["errors"].to<JsonArray>();
 
-  savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
+  JsonDocument codes = loadSavedCodes();
+  JsonArray savedArr = codes.as<JsonArray>();
 
   const int maxErrors = 12;
   for (size_t i = 0; i < in.size(); i++) {
@@ -156,7 +199,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (!v.is<JsonObject>()) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = "Entry is not an object";
       }
@@ -178,40 +221,33 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (reason) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = reason;
       }
       continue;
     }
 
-    StaticJsonDocument<384> entry;
-    entry["name"] = name;
-    entry["protocol"] = protocol;
-    entry["value"] = valueHex;
-    entry["bits"] = bits;
-
-    char buf[SAVED_CODE_MAX];
-    size_t outLen = serializeJson(entry, buf, sizeof(buf));
-    if (outLen >= SAVED_CODE_MAX) {
+    if (measureJson(src) >= SAVED_CODE_MAX) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = "Entry too large";
       }
       continue;
     }
 
-    String key = String(n);
-    savedCodes.putString(key.c_str(), buf);
-    n++;
+    JsonObject entry = savedArr.add<JsonObject>();
+    entry["name"] = name;
+    entry["protocol"] = protocol;
+    entry["value"] = valueHex;
+    entry["bits"] = bits;
     outDoc["imported"] = (int)outDoc["imported"] + 1;
   }
 
-  savedCodes.putInt("n", n);
-  savedCodes.end();
-  outDoc["total"] = n;
+  saveSavedCodes(codes);
+  outDoc["total"] = savedArr.size();
 
   String out;
   serializeJson(outDoc, out);
@@ -239,41 +275,28 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     valueHex = buf;
     bits = c.bits;
   }
-  savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
-  StaticJsonDocument<384> doc;
-  doc["name"] = name;
-  doc["protocol"] = protocol;
-  doc["value"] = valueHex;
-  doc["bits"] = bits;
-  char buf[SAVED_CODE_MAX];
-  size_t outLen = serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
-  savedCodes.putInt("n", n + 1);
-  savedCodes.end();
+
+  JsonDocument codes = loadSavedCodes();
+  JsonArray arr = codes.as<JsonArray>();
+  int n = arr.size();
+
+  JsonObject obj = arr.add<JsonObject>();
+  obj["name"] = name;
+  obj["protocol"] = protocol;
+  obj["value"] = valueHex;
+  obj["bits"] = bits;
+
+  saveSavedCodes(codes);
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
 // GET /saved — JSON array of saved codes
 void handleSaved(AsyncWebServerRequest *request) {
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
-  DynamicJsonDocument doc(4096);
-  JsonArray arr = doc.to<JsonArray>();
-  for (int i = 0; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
-    JsonObject obj = arr.add<JsonObject>();
-    StaticJsonDocument<384> entry;
-    deserializeJson(entry, raw);
-    obj["index"] = i;
-    obj["name"] = entry["name"].as<const char *>();
-    obj["protocol"] = entry["protocol"].as<const char *>();
-    obj["value"] = entry["value"].as<const char *>();
-    obj["bits"] = entry["bits"].as<uint16_t>();
+  JsonDocument doc = loadSavedCodes();
+  JsonArray arr = doc.as<JsonArray>();
+  for (size_t i = 0; i < arr.size(); i++) {
+    arr[i]["index"] = i;
   }
-  savedCodes.end();
   String out;
   serializeJson(doc, out);
   request->send(200, "application/json", out);
@@ -286,20 +309,15 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     return;
   }
   int index = request->getParam("index")->value().toInt();
-  savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
-  if (index < 0 || index >= n) {
-    savedCodes.end();
+  JsonDocument codes = loadSavedCodes();
+  JsonArray arr = codes.as<JsonArray>();
+  if (index < 0 || (size_t)index >= arr.size()) {
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
-  for (int i = index; i < n - 1; i++) {
-    String nextRaw = savedCodes.getString(String(i + 1).c_str(), "{}");
-    savedCodes.putString(String(i).c_str(), nextRaw);
-  }
-  savedCodes.putInt("n", n - 1);
-  savedCodes.end();
-  request->send(200, "application/json", "{\"ok\":true,\"remaining\":" + String(n - 1) + "}");
+  arr.remove(index);
+  saveSavedCodes(codes);
+  request->send(200, "application/json", "{\"ok\":true,\"remaining\":" + String(arr.size()) + "}");
 }
 
 // POST /saved/rename?index=N&name=NewName — rename one saved code.
@@ -310,46 +328,32 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   int index = request->getParam("index")->value().toInt();
   String newName = request->getParam("name")->value();
-  savedCodes.begin(SAVED_CODES_NAMESPACE, false);
-  int n = savedCodes.getInt("n", 0);
-  if (index < 0 || index >= n) {
-    savedCodes.end();
+  JsonDocument codes = loadSavedCodes();
+  JsonArray arr = codes.as<JsonArray>();
+  if (index < 0 || (size_t)index >= arr.size()) {
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
-  String key = String(index);
-  String raw = savedCodes.getString(key.c_str(), "{}");
-  StaticJsonDocument<384> entry;
-  DeserializationError err = deserializeJson(entry, raw);
-  if (err) {
-    savedCodes.end();
-    request->send(500, "application/json", "{\"error\":\"Stored code parse failed\"}");
-    return;
-  }
-  entry["name"] = newName;
-  char buf[SAVED_CODE_MAX];
-  size_t len = serializeJson(entry, buf, sizeof(buf));
-  if (len >= SAVED_CODE_MAX) {
-    savedCodes.end();
+
+  arr[index]["name"] = newName;
+  if (measureJson(arr[index]) >= SAVED_CODE_MAX) {
     request->send(413, "application/json", "{\"error\":\"Name too long\"}");
     return;
   }
-  savedCodes.putString(key.c_str(), buf);
-  savedCodes.end();
+
+  saveSavedCodes(codes);
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
 }
 
 // GET /dump — plain text for hardcoding (C-style)
 void handleDump(AsyncWebServerRequest *request) {
-  savedCodes.begin(SAVED_CODES_NAMESPACE, true);
-  int n = savedCodes.getInt("n", 0);
+  JsonDocument doc = loadSavedCodes();
+  JsonArray arr = doc.as<JsonArray>();
+  int n = arr.size();
   String out = "// Saved IR codes — paste into firmware\n";
   out += "// Count: " + String(n) + "\n\n";
   for (int i = 0; i < n; i++) {
-    String key = String(i);
-    String raw = savedCodes.getString(key.c_str(), "{}");
-    StaticJsonDocument<384> entry;
-    deserializeJson(entry, raw);
+    JsonObject entry = arr[i];
     const char *name = entry["name"] | "";
     String protocol = entry["protocol"] | "UNKNOWN";
     const char *valueHex = entry["value"] | "0";
@@ -360,7 +364,6 @@ void handleDump(AsyncWebServerRequest *request) {
     else
       out += "// irsend.send... (unsupported protocol); value=0x" + String(valueHex) + " " + String(name) + "\n";
   }
-  savedCodes.end();
   request->send(200, "text/plain", out);
 }
 
@@ -501,6 +504,7 @@ void setup() {
     printf("[IR] LittleFS mount failed!\n");
   } else {
     printf("[IR] LittleFS mounted\n");
+    migrateNvsToLittleFS();
   }
 
   irrecv.enableIRIn();
