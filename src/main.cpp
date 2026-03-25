@@ -19,7 +19,7 @@
 
 #define HISTORY_SIZE 5
 #define SAVED_CODES_NAMESPACE "ir_saved"
-#define SAVED_CODE_MAX 512   // NVS value limit ~508; keep JSON under this
+#define SAVED_CODE_MAX 500   // NVS value limit ~508; keep JSON under this
 
 const uint16_t RECV_PIN = 10;     // IR receiver on GPIO10 (ESP32-C3)
 const uint16_t SEND_PIN = 4;      // IR LED on GPIO4
@@ -301,13 +301,13 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   obj["protocol"] = protocol;
   obj["value"] = valueHex;
   obj["bits"] = bits;
-  char buf[SAVED_CODE_MAX];
-  size_t outLen = serializeJson(doc, buf, sizeof(buf));
-  if (outLen >= SAVED_CODE_MAX) {
+  if (measureJson(doc) >= SAVED_CODE_MAX) {
     savedCodes.end();
     request->send(413, "application/json", "{\"error\":\"Code too large\"}");
     return;
   }
+  char buf[SAVED_CODE_MAX];
+  serializeJson(doc, buf, sizeof(buf));
   String key = String(n);
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
@@ -401,9 +401,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     entry["value"] = valueHex;
     entry["bits"] = bits;
 
-    char buf[SAVED_CODE_MAX];
-    size_t outLen = serializeJson(entry, buf, sizeof(buf));
-    if (outLen >= SAVED_CODE_MAX) {
+    if (measureJson(entry) >= SAVED_CODE_MAX) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
         JsonObject e = errors.add<JsonObject>();
@@ -412,6 +410,8 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
       }
       continue;
     }
+    char buf[SAVED_CODE_MAX];
+    serializeJson(entry, buf, sizeof(buf));
 
     String key = String(n);
     savedCodes.putString(key.c_str(), buf);
@@ -461,8 +461,13 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   doc["protocol"] = protocol;
   doc["value"] = valueHex;
   doc["bits"] = bits;
+  if (measureJson(doc) >= SAVED_CODE_MAX) {
+    savedCodes.end();
+    request->send(413, "application/json", "{\"error\":\"Code too large\"}");
+    return;
+  }
   char buf[SAVED_CODE_MAX];
-  size_t outLen = serializeJson(doc, buf, sizeof(buf));
+  serializeJson(doc, buf, sizeof(buf));
   String key = String(n);
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
@@ -534,13 +539,13 @@ void handleSavedRename(AsyncWebServerRequest *request) {
     return;
   }
   entry["name"] = newName;
-  char buf[SAVED_CODE_MAX];
-  size_t len = serializeJson(entry, buf, sizeof(buf));
-  if (len >= SAVED_CODE_MAX) {
+  if (measureJson(entry) >= SAVED_CODE_MAX) {
     savedCodes.end();
     request->send(413, "application/json", "{\"error\":\"Name too long\"}");
     return;
   }
+  char buf[SAVED_CODE_MAX];
+  serializeJson(entry, buf, sizeof(buf));
   savedCodes.putString(key.c_str(), buf);
   savedCodes.end();
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
