@@ -10,6 +10,8 @@
 #include <IRrecv.h>
 #include <IRsend.h>
 #include <IRutils.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include "secrets.h"
 #include "ir_utils.h"
 
@@ -39,11 +41,15 @@ IrCapture history[HISTORY_SIZE];
 int historyLen = 0;
 
 Preferences savedCodes;
+SemaphoreHandle_t nvsMutex = NULL;
 
 int getSavedCount() {
+  if (nvsMutex == NULL) return 0;
+  xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   savedCodes.end();
+  xSemaphoreGive(nvsMutex);
   return n;
 }
 
@@ -88,6 +94,7 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
     request->send(400, "application/json", "{\"error\":\"Missing value\"}");
     return;
   }
+  if (nvsMutex) xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   JsonObject obj = doc.to<JsonObject>();
@@ -99,6 +106,7 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   size_t outLen = serializeJson(doc, buf, sizeof(buf));
   if (outLen >= SAVED_CODE_MAX) {
     savedCodes.end();
+    if (nvsMutex) xSemaphoreGive(nvsMutex);
     request->send(413, "application/json", "{\"error\":\"Code too large\"}");
     return;
   }
@@ -106,6 +114,7 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
+  if (nvsMutex) xSemaphoreGive(nvsMutex);
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -147,6 +156,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   outDoc["skipped"] = 0;
   JsonArray errors = outDoc.createNestedArray("errors");
 
+  if (nvsMutex) xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
 
@@ -211,6 +221,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
 
   savedCodes.putInt("n", n);
   savedCodes.end();
+  if (nvsMutex) xSemaphoreGive(nvsMutex);
   outDoc["total"] = n;
 
   String out;
@@ -239,6 +250,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     valueHex = buf;
     bits = c.bits;
   }
+  if (nvsMutex) xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   StaticJsonDocument<384> doc;
@@ -252,11 +264,13 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
+  if (nvsMutex) xSemaphoreGive(nvsMutex);
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
 // GET /saved — JSON array of saved codes
 void handleSaved(AsyncWebServerRequest *request) {
+  if (nvsMutex) xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   DynamicJsonDocument doc(4096);
@@ -274,6 +288,7 @@ void handleSaved(AsyncWebServerRequest *request) {
     obj["bits"] = entry["bits"].as<uint16_t>();
   }
   savedCodes.end();
+  if (nvsMutex) xSemaphoreGive(nvsMutex);
   String out;
   serializeJson(doc, out);
   request->send(200, "application/json", out);
@@ -286,10 +301,12 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     return;
   }
   int index = request->getParam("index")->value().toInt();
+  if (nvsMutex) xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   if (index < 0 || index >= n) {
     savedCodes.end();
+    if (nvsMutex) xSemaphoreGive(nvsMutex);
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
@@ -299,6 +316,7 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
   }
   savedCodes.putInt("n", n - 1);
   savedCodes.end();
+  if (nvsMutex) xSemaphoreGive(nvsMutex);
   request->send(200, "application/json", "{\"ok\":true,\"remaining\":" + String(n - 1) + "}");
 }
 
@@ -310,10 +328,12 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   int index = request->getParam("index")->value().toInt();
   String newName = request->getParam("name")->value();
+  if (nvsMutex) xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
   if (index < 0 || index >= n) {
     savedCodes.end();
+    if (nvsMutex) xSemaphoreGive(nvsMutex);
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
@@ -323,6 +343,7 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   DeserializationError err = deserializeJson(entry, raw);
   if (err) {
     savedCodes.end();
+    if (nvsMutex) xSemaphoreGive(nvsMutex);
     request->send(500, "application/json", "{\"error\":\"Stored code parse failed\"}");
     return;
   }
@@ -331,16 +352,19 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   size_t len = serializeJson(entry, buf, sizeof(buf));
   if (len >= SAVED_CODE_MAX) {
     savedCodes.end();
+    if (nvsMutex) xSemaphoreGive(nvsMutex);
     request->send(413, "application/json", "{\"error\":\"Name too long\"}");
     return;
   }
   savedCodes.putString(key.c_str(), buf);
   savedCodes.end();
+  if (nvsMutex) xSemaphoreGive(nvsMutex);
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
 }
 
 // GET /dump — plain text for hardcoding (C-style)
 void handleDump(AsyncWebServerRequest *request) {
+  if (nvsMutex) xSemaphoreTake(nvsMutex, portMAX_DELAY);
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
   String out = "// Saved IR codes — paste into firmware\n";
@@ -361,6 +385,7 @@ void handleDump(AsyncWebServerRequest *request) {
       out += "// irsend.send... (unsupported protocol); value=0x" + String(valueHex) + " " + String(name) + "\n";
   }
   savedCodes.end();
+  if (nvsMutex) xSemaphoreGive(nvsMutex);
   request->send(200, "text/plain", out);
 }
 
@@ -496,6 +521,7 @@ void setup() {
   printf("[IR] --- ESP32-C3 IR Blaster boot ---\n");
 
   setupWifi();
+  nvsMutex = xSemaphoreCreateMutex();
 
   if (!LittleFS.begin(true)) {
     printf("[IR] LittleFS mount failed!\n");
