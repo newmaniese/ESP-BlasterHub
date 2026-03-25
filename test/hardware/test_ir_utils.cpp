@@ -117,36 +117,6 @@ void test_saveUrlFor_value_hex_format(void) {
 }
 
 // ---------------------------------------------------------------------------
-// sendUrlForSaved
-// ---------------------------------------------------------------------------
-
-void test_sendUrlForSaved_nec(void) {
-  String url = sendUrlForSaved("NEC", "FF827D", 32);
-  TEST_ASSERT_EQUAL_STRING("/send?type=nec&data=FF827D&length=32", url.c_str());
-}
-
-void test_sendUrlForSaved_nec_case_insensitive(void) {
-  String url = sendUrlForSaved("nec", "ABCD", 16);
-  TEST_ASSERT_TRUE(url.length() > 0);
-  TEST_ASSERT_TRUE(url.indexOf("ABCD") >= 0);
-}
-
-void test_sendUrlForSaved_non_nec_returns_empty(void) {
-  String url = sendUrlForSaved("Sony", "1234", 12);
-  TEST_ASSERT_EQUAL_STRING("", url.c_str());
-}
-
-void test_sendUrlForSaved_null_protocol_returns_empty(void) {
-  String url = sendUrlForSaved(nullptr, "FF", 32);
-  TEST_ASSERT_EQUAL_STRING("", url.c_str());
-}
-
-void test_sendUrlForSaved_null_value_returns_empty(void) {
-  String url = sendUrlForSaved("NEC", nullptr, 32);
-  TEST_ASSERT_EQUAL_STRING("", url.c_str());
-}
-
-// ---------------------------------------------------------------------------
 // escapeHtml
 // ---------------------------------------------------------------------------
 
@@ -232,13 +202,6 @@ void setup() {
   RUN_TEST(test_saveUrlFor_with_name);
   RUN_TEST(test_saveUrlFor_without_name);
   RUN_TEST(test_saveUrlFor_value_hex_format);
-
-  // sendUrlForSaved
-  RUN_TEST(test_sendUrlForSaved_nec);
-  RUN_TEST(test_sendUrlForSaved_nec_case_insensitive);
-  RUN_TEST(test_sendUrlForSaved_non_nec_returns_empty);
-  RUN_TEST(test_sendUrlForSaved_null_protocol_returns_empty);
-  RUN_TEST(test_sendUrlForSaved_null_value_returns_empty);
 
   // escapeHtml
   RUN_TEST(test_escapeHtml_ampersand);

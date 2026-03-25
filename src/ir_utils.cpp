@@ -12,14 +12,6 @@ String saveUrlFor(const IrCapture& c, const String& name) {
   return url;
 }
 
-String sendUrlForSaved(const char* protocol, const char* valueHex, uint16_t bits) {
-  if (protocol == nullptr || valueHex == nullptr) return "";
-  if (String(protocol).equalsIgnoreCase("NEC")) {
-    return "/send?type=nec&data=" + String(valueHex) + "&length=" + String(bits);
-  }
-  return "";
-}
-
 String escapeHtml(const String& s) {
   String out;
   out.reserve(s.length() + 8);
