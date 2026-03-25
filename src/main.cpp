@@ -74,17 +74,17 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   delete acc;
   request->_tempObject = nullptr;
 
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
   DeserializationError err = deserializeJson(doc, body);
   if (err) {
     request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
     return;
   }
-  const char *name = doc["name"] | "";
-  const char *protocol = doc["protocol"] | "UNKNOWN";
-  const char *valueHex = doc["value"];
+  String name = doc["name"] | "";
+  String protocol = doc["protocol"] | "UNKNOWN";
+  String valueHex = doc["value"] | "";
   uint16_t bits = doc["bits"] | 32;
-  if (!valueHex) {
+  if (valueHex.length() == 0) {
     request->send(400, "application/json", "{\"error\":\"Missing value\"}");
     return;
   }
@@ -128,8 +128,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   delete acc;
   request->_tempObject = nullptr;
 
-  size_t docSize = (size_t)body.length() + 2048;
-  DynamicJsonDocument inputDoc(docSize);
+  JsonDocument inputDoc;
   DeserializationError err = deserializeJson(inputDoc, body);
   if (err) {
     request->send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
@@ -141,11 +140,11 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   }
 
   JsonArray in = inputDoc.as<JsonArray>();
-  DynamicJsonDocument outDoc(2048);
+  JsonDocument outDoc;
   outDoc["ok"] = true;
   outDoc["imported"] = 0;
   outDoc["skipped"] = 0;
-  JsonArray errors = outDoc.createNestedArray("errors");
+  JsonArray errors = outDoc["errors"].to<JsonArray>();
 
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
@@ -156,7 +155,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (!v.is<JsonObject>()) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = "Entry is not an object";
       }
@@ -178,14 +177,14 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (reason) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = reason;
       }
       continue;
     }
 
-    StaticJsonDocument<384> entry;
+    JsonDocument entry;
     entry["name"] = name;
     entry["protocol"] = protocol;
     entry["value"] = valueHex;
@@ -196,7 +195,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     if (outLen >= SAVED_CODE_MAX) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
-        JsonObject e = errors.createNestedObject();
+        JsonObject e = errors.add<JsonObject>();
         e["index"] = (int)i;
         e["reason"] = "Entry too large";
       }
@@ -241,7 +240,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   }
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = savedCodes.getInt("n", 0);
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
   doc["name"] = name;
   doc["protocol"] = protocol;
   doc["value"] = valueHex;
@@ -259,13 +258,13 @@ void handleSaveGet(AsyncWebServerRequest *request) {
 void handleSaved(AsyncWebServerRequest *request) {
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
   JsonArray arr = doc.to<JsonArray>();
   for (int i = 0; i < n; i++) {
     String key = String(i);
     String raw = savedCodes.getString(key.c_str(), "{}");
     JsonObject obj = arr.add<JsonObject>();
-    StaticJsonDocument<384> entry;
+    JsonDocument entry;
     deserializeJson(entry, raw);
     obj["index"] = i;
     obj["name"] = entry["name"].as<const char *>();
@@ -319,7 +318,7 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   String key = String(index);
   String raw = savedCodes.getString(key.c_str(), "{}");
-  StaticJsonDocument<384> entry;
+  JsonDocument entry;
   DeserializationError err = deserializeJson(entry, raw);
   if (err) {
     savedCodes.end();
@@ -348,7 +347,7 @@ void handleDump(AsyncWebServerRequest *request) {
   for (int i = 0; i < n; i++) {
     String key = String(i);
     String raw = savedCodes.getString(key.c_str(), "{}");
-    StaticJsonDocument<384> entry;
+    JsonDocument entry;
     deserializeJson(entry, raw);
     const char *name = entry["name"] | "";
     String protocol = entry["protocol"] | "UNKNOWN";
@@ -371,7 +370,7 @@ void handleRoot(AsyncWebServerRequest *request) {
 
 // GET /last — JSON for live-update polling: { seq, human, raw, replayUrl }
 void handleLast(AsyncWebServerRequest *request) {
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["seq"] = lastCodeSeq;
   doc["human"] = lastHumanReadable;
   doc["raw"] = lastRawJson;
@@ -422,7 +421,7 @@ void handleSend(AsyncWebServerRequest *request) {
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_CONNECT) {
     // Send current last code so new client gets state
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["event"] = "ir";
     doc["seq"] = lastCodeSeq;
     doc["human"] = lastHumanReadable;
@@ -442,7 +441,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
     if (info->opcode != WS_TEXT) return;
     if (len == 0) return;
-    StaticJsonDocument<384> req;
+    JsonDocument req;
     DeserializationError err = deserializeJson(req, data, len);
     if (err) return;
     if (!req["cmd"].is<const char *>() || String(req["cmd"].as<const char *>()) != "send") return;
@@ -452,7 +451,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     String name = req["name"] | "";
     if (stype == "nec" && sdata.length() > 0) {
       if (!isHexValue(sdata.c_str()) || length < 1 || length > 128) {
-        StaticJsonDocument<256> nack;
+        JsonDocument nack;
         nack["ok"] = false;
         nack["error"] = "Invalid hex data or length";
         String nackStr;
@@ -462,7 +461,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
       }
       uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
       irsend.sendNEC(value, length);
-      StaticJsonDocument<256> ack;
+      JsonDocument ack;
       ack["ok"] = true;
       ack["msg"] = "Sent NEC " + sdata;
       if (name.length() > 0) ack["name"] = name;
@@ -565,7 +564,7 @@ void loop() {
     printf("[IR] %s\n", lastRawJson.c_str());
 
     if (ws.count() > 0) {
-      StaticJsonDocument<512> doc;
+      JsonDocument doc;
       doc["event"] = "ir";
       doc["seq"] = lastCodeSeq;
       doc["human"] = lastHumanReadable;
