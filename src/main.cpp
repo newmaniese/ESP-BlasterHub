@@ -445,7 +445,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     const IrCapture &c = history[0];
     protocol = c.protocol;
     char buf[20];
-    sprintf(buf, "%08lX", (unsigned long)(c.value & 0xFFFFFFFF));
+    snprintf(buf, sizeof(buf), "%08lX", (unsigned long)(c.value & 0xFFFFFFFF));
     valueHex = buf;
     bits = c.bits;
   }
@@ -641,7 +641,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     if (historyLen > 0) {
       doc["protocol"] = history[0].protocol;
       char valHex[20];
-      sprintf(valHex, "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
+      snprintf(valHex, sizeof(valHex), "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
       doc["value"] = valHex;
       doc["bits"] = history[0].bits;
     }
@@ -803,7 +803,7 @@ void loop() {
       doc["replayUrl"] = replayUrlFor(history[0]);
       doc["protocol"] = history[0].protocol;
       char valHex[20];
-      sprintf(valHex, "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
+      snprintf(valHex, sizeof(valHex), "%08lX", (unsigned long)(history[0].value & 0xFFFFFFFF));
       doc["value"] = valHex;
       doc["bits"] = history[0].bits;
       String out;
