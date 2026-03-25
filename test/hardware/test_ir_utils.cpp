@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <unity.h>
+#include <IRsend.h>
 #include "ir_utils.h"
+#include "IrSender.h"
 
 // ---------------------------------------------------------------------------
 // replayUrlFor
@@ -173,6 +175,42 @@ void test_escapeHtml_all_special(void) {
 }
 
 // ---------------------------------------------------------------------------
+// IrSender
+// ---------------------------------------------------------------------------
+
+void test_ir_sender_queue_basic(void) {
+  IRsend irsend(4);
+  IrSender sender(irsend);
+
+  TEST_ASSERT_FALSE(sender.isJobPending());
+  sender.queue(0x1234, 32, 1);
+  TEST_ASSERT_TRUE(sender.isJobPending());
+  TEST_ASSERT_FALSE(sender.isActive());
+}
+
+void test_ir_sender_queue_invalid(void) {
+  IRsend irsend(4);
+  IrSender sender(irsend);
+
+  // repeat < 1 should not queue a job
+  sender.queue(0x1234, 32, 0);
+  TEST_ASSERT_FALSE(sender.isJobPending());
+}
+
+void test_ir_sender_loop_transfers_job(void) {
+  IRsend irsend(4);
+  IrSender sender(irsend);
+
+  sender.queue(0x1234, 32, 2);
+  TEST_ASSERT_TRUE(sender.isJobPending());
+
+  sender.loop();
+
+  TEST_ASSERT_FALSE(sender.isJobPending());
+  TEST_ASSERT_TRUE(sender.isActive());
+}
+
+// ---------------------------------------------------------------------------
 // Unity setup
 // ---------------------------------------------------------------------------
 
@@ -215,6 +253,11 @@ void setup() {
   RUN_TEST(test_isHexValue_invalid);
   RUN_TEST(test_isHexValue_empty);
   RUN_TEST(test_isHexValue_null);
+
+  // IrSender
+  RUN_TEST(test_ir_sender_queue_basic);
+  RUN_TEST(test_ir_sender_queue_invalid);
+  RUN_TEST(test_ir_sender_loop_transfers_job);
 
   UNITY_END();
 }
