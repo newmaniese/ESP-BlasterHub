@@ -52,6 +52,18 @@ void test_replayUrlFor_nec_case_insensitive(void) {
   TEST_ASSERT_TRUE(url.length() > 0);
 }
 
+void test_replayUrlFor_nec_large_value(void) {
+  IrCapture c;
+  c.protocol = "NEC";
+  c.value = 0x1234567890ABCDEFULL;
+  c.bits = 32;
+
+  String url = replayUrlFor(c);
+  // It should only take the lower 32 bits and be formatted as 8 hex chars.
+  TEST_ASSERT_TRUE(url.indexOf("90ABCDEF") >= 0);
+  TEST_ASSERT_TRUE(url.indexOf("12345678") < 0);
+}
+
 // ---------------------------------------------------------------------------
 // isHexValue
 // ---------------------------------------------------------------------------
@@ -169,6 +181,7 @@ void setup() {
   RUN_TEST(test_replayUrlFor_nec_16bit);
   RUN_TEST(test_replayUrlFor_non_nec_returns_empty);
   RUN_TEST(test_replayUrlFor_nec_case_insensitive);
+  RUN_TEST(test_replayUrlFor_nec_large_value);
 
   // saveUrlFor
   RUN_TEST(test_saveUrlFor_with_name);
