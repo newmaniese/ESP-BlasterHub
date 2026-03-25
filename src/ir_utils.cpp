@@ -23,17 +23,3 @@ String sendUrlForSaved(const char* protocol, const char* valueHex, uint16_t bits
   }
   return "";
 }
-
-String escapeHtml(const String& s) {
-  String out;
-  out.reserve(s.length() + 8);
-  for (unsigned i = 0; i < s.length(); i++) {
-    char c = s[i];
-    if (c == '&') out += "&amp;";
-    else if (c == '<') out += "&lt;";
-    else if (c == '>') out += "&gt;";
-    else if (c == '"') out += "&quot;";
-    else out += c;
-  }
-  return out;
-}

@@ -145,34 +145,6 @@ void test_sendUrlForSaved_null_value_returns_empty(void) {
 }
 
 // ---------------------------------------------------------------------------
-// escapeHtml
-// ---------------------------------------------------------------------------
-
-void test_escapeHtml_ampersand(void) {
-  TEST_ASSERT_EQUAL_STRING("a&amp;b", escapeHtml("a&b").c_str());
-}
-
-void test_escapeHtml_less_than(void) {
-  TEST_ASSERT_EQUAL_STRING("&lt;tag&gt;", escapeHtml("<tag>").c_str());
-}
-
-void test_escapeHtml_double_quote(void) {
-  TEST_ASSERT_EQUAL_STRING("say &quot;hi&quot;", escapeHtml("say \"hi\"").c_str());
-}
-
-void test_escapeHtml_plain_string_unchanged(void) {
-  TEST_ASSERT_EQUAL_STRING("hello world", escapeHtml("hello world").c_str());
-}
-
-void test_escapeHtml_empty_string(void) {
-  TEST_ASSERT_EQUAL_STRING("", escapeHtml("").c_str());
-}
-
-void test_escapeHtml_all_special(void) {
-  TEST_ASSERT_EQUAL_STRING("&amp;&lt;&gt;&quot;", escapeHtml("&<>\"").c_str());
-}
-
-// ---------------------------------------------------------------------------
 // Unity setup
 // ---------------------------------------------------------------------------
 
@@ -201,14 +173,6 @@ void setup() {
   RUN_TEST(test_sendUrlForSaved_non_nec_returns_empty);
   RUN_TEST(test_sendUrlForSaved_null_protocol_returns_empty);
   RUN_TEST(test_sendUrlForSaved_null_value_returns_empty);
-
-  // escapeHtml
-  RUN_TEST(test_escapeHtml_ampersand);
-  RUN_TEST(test_escapeHtml_less_than);
-  RUN_TEST(test_escapeHtml_double_quote);
-  RUN_TEST(test_escapeHtml_plain_string_unchanged);
-  RUN_TEST(test_escapeHtml_empty_string);
-  RUN_TEST(test_escapeHtml_all_special);
 
   // isHexValue
   RUN_TEST(test_isHexValue_valid);

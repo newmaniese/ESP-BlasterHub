@@ -53,7 +53,7 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 - **`src/main.cpp`** -- Firmware: WiFi, LittleFS, AsyncWebServer + WebSocket, IR recv/send, NVS stored codes, BLE integration, template processor.
 - **`src/ble_server.cpp`** / **`include/ble_server.h`** -- BLE GATT server (NimBLE): service, characteristics, bonding, advertising.
 - **`data/`** -- Frontend files served from LittleFS: `index.html`, `app.css`, `app.js`.
-- **`src/ir_utils.cpp`** / **`include/ir_utils.h`** -- Pure helper functions (URL builders, HTML escape) shared by firmware and unit tests.
+- **`src/ir_utils.cpp`** / **`include/ir_utils.h`** -- Pure helper functions (URL builders) shared by firmware and unit tests.
 - **`test/test_ir_utils.cpp`** -- Unity unit tests for the helpers (run on device).
 - **`test/integration/test_api.py`** -- pytest integration tests for the HTTP API (run from host).
 - **`test/integration/test_ble.py`** -- pytest + bleak integration tests for the BLE GATT service (run from host).
@@ -88,7 +88,7 @@ Full API and UI behavior: **[docs/web-interface.md](docs/web-interface.md)**.
 
 ### Unit tests (on device)
 
-Pure helper functions (`replayUrlFor`, `saveUrlFor`, `sendUrlForSaved`, `escapeHtml`) are extracted into `include/ir_utils.h` / `src/ir_utils.cpp` and tested with Unity on the ESP32-C3. The `esp32c3-test` env builds only the helpers (no WiFi, IR, or NVS).
+Pure helper functions (`replayUrlFor`, `saveUrlFor`, `sendUrlForSaved`) are extracted into `include/ir_utils.h` / `src/ir_utils.cpp` and tested with Unity on the ESP32-C3. The `esp32c3-test` env builds only the helpers (no WiFi, IR, or NVS).
 
 ```bash
 pio test -e esp32c3-test

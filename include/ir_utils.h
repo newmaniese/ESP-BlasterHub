@@ -20,7 +20,4 @@ String saveUrlFor(const IrCapture& c, const String& name);
 // Build /send URL for a saved code (NEC only). Returns empty if not sendable.
 String sendUrlForSaved(const char* protocol, const char* valueHex, uint16_t bits);
 
-// Escape &, <, >, " for safe HTML embedding.
-String escapeHtml(const String& s);
-
 #endif // IR_UTILS_H
