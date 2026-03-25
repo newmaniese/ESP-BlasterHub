@@ -17,7 +17,4 @@ String replayUrlFor(const IrCapture& c);
 // Build /save URL for a capture, with optional name query param.
 String saveUrlFor(const IrCapture& c, const String& name);
 
-// Escape &, <, >, " for safe HTML embedding.
-String escapeHtml(const String& s);
-
 #endif // IR_UTILS_H
