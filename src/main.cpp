@@ -202,6 +202,16 @@ String getSavedCodesJsonCompact() {
   return out;
 }
 
+// Helper to parse, validate, and queue an NEC code.
+static bool transmitNEC(const char *hexStr, int length, int repeat = 1, const char *name = nullptr) {
+  if (!hexStr || strlen(hexStr) == 0 || !isHexValue(hexStr)) return false;
+  if (length < 1 || length > 128) return false;
+  uint32_t value = strtoul(hexStr, nullptr, 16);
+  irSender.queue(value, length, repeat);
+  printf("[IR] TX NEC 0x%s %db (%s)\n", hexStr, length, (name && strlen(name) > 0) ? name : "no name");
+  return true;
+}
+
 // Find first saved code index whose name matches (case-insensitive). Returns -1 if not found.
 int getSavedCodeIndexByName(const char *name) {
   if (!name || !*name) return -1;
@@ -249,11 +259,13 @@ bool sendSavedCode(int index, String &outName) {
   const char *valueHex = entry["value"] | "";
   uint16_t bits = entry["bits"] | 32;
 
-  if (String(protocol).equalsIgnoreCase("NEC") && strlen(valueHex) > 0) {
-    uint32_t value = strtoul(valueHex, nullptr, 16);
-    irSender.queue(value, bits, 1);
-    printf("[IR] TX NEC 0x%s %db (%s)\n", valueHex, bits, outName.length() ? outName.c_str() : "no name");
-    return true;
+  if (String(protocol).equalsIgnoreCase("NEC")) {
+    if (transmitNEC(valueHex, bits, 1, outName.c_str())) {
+      return true;
+    } else {
+      printf("[IR] Invalid NEC data or length for saved code #%d\n", index);
+      return false;
+    }
   }
 
   printf("[IR] Unsupported protocol for saved code #%d: %s\n", index, protocol);
@@ -663,14 +675,11 @@ void handleSend(AsyncWebServerRequest *request) {
   }
 
   if (type == "nec") {
-    if (!isHexValue(data.c_str())) {
+    if (transmitNEC(data.c_str(), length, repeat, nullptr)) {
+      request->send(200, "text/plain", "Sent NEC " + data);
+    } else {
       request->send(400, "text/plain", "Invalid hex data");
-      return;
     }
-    uint32_t value = strtoul(data.c_str(), nullptr, 16);
-    irSender.queue(value, length, repeat);
-    printf("[IR] TX NEC 0x%s %db (no name)\n", data.c_str(), length);
-    request->send(200, "text/plain", "Sent NEC " + data);
   } else {
     request->send(400, "text/plain", "Unsupported type");
   }
@@ -717,10 +726,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     }
 
     if (stype == "nec") {
-      if (sdata.length() > 0 && isHexValue(sdata.c_str()) && length > 0 && length <= 128) {
-        uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
-        irSender.queue(value, length, 1);
-        printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
+      if (transmitNEC(sdata.c_str(), length, 1, name.c_str())) {
         JsonDocument ack;
         ack["ok"] = true;
         ack["msg"] = "Sent NEC " + sdata;
