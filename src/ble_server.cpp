@@ -192,6 +192,7 @@ class SendCommandCallbacks : public BLECharacteristicCallbacks {
 
 // Schedule — JSON write: {"delay_seconds": N, "command": "Name"} to arm, or {"heartbeat": true} to reset.
 class ScheduleCallbacks : public BLECharacteristicCallbacks {
+public:
   void onWrite(BLECharacteristic* pCharacteristic) override {
     std::string val = pCharacteristic->getValue();
     if (val.size() == 0) {
@@ -208,59 +209,69 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
     }
 
     if (doc["heartbeat"].is<bool>() && doc["heartbeat"].as<bool>()) {
-      unsigned long nowMs = millis();
-      {
-        ScheduleStateLock lock;
-        if (!lock) {
-          setStatus("ERR:schedule lock");
-          return;
-        }
-        lastHeartbeatMs = nowMs;
-      }
-      printf("[BLE] Schedule: heartbeat\n");
+      handleHeartbeat();
       return;
     }
 
     if (doc["delay_seconds"].is<int>() && doc["command"].is<const char*>()) {
-      int sec = doc["delay_seconds"].as<int>();
-      const char* cmd = doc["command"].as<const char*>();
-      if (sec <= 0 || !cmd || !*cmd) {
-        setStatus("ERR:schedule invalid");
-        return;
-      }
-      if ((uint32_t)sec > BLE_SCHEDULE_DELAY_SEC_MAX) {
-        setStatus("ERR:schedule delay too long");
-        printf("[BLE] Schedule: delay_seconds %d exceeds max %u\n", sec, (unsigned)BLE_SCHEDULE_DELAY_SEC_MAX);
-        return;
-      }
-      size_t len = strlen(cmd);
-      if (len >= BLE_SCHEDULE_CMD_NAME_MAX) {
-        setStatus("ERR:schedule name long");
-        return;
-      }
-      char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX];
-      strncpy(commandCopy, cmd, BLE_SCHEDULE_CMD_NAME_MAX - 1);
-      commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
-      uint32_t delayMs = (uint32_t)sec * 1000UL;
-      unsigned long nowMs = millis();
-      {
-        ScheduleStateLock lock;
-        if (!lock) {
-          setStatus("ERR:schedule lock");
-          return;
-        }
-        strncpy(scheduledCommandName, commandCopy, BLE_SCHEDULE_CMD_NAME_MAX - 1);
-        scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
-        scheduledDelayMs = delayMs;
-        lastHeartbeatMs = nowMs;
-        scheduledArmed = true;
-      }
-      printf("[BLE] Schedule: armed %s in %u s\n", commandCopy, (unsigned)sec);
-      setStatus("OK:scheduled");
+      handleCommand(doc["delay_seconds"].as<int>(), doc["command"].as<const char*>());
       return;
     }
 
     setStatus("ERR:schedule format");
+  }
+
+private:
+  void handleHeartbeat() {
+    unsigned long nowMs = millis();
+    {
+      ScheduleStateLock lock;
+      if (!lock) {
+        setStatus("ERR:schedule lock");
+        return;
+      }
+      lastHeartbeatMs = nowMs;
+    }
+    printf("[BLE] Schedule: heartbeat\n");
+  }
+
+  void handleCommand(int sec, const char* cmd) {
+    if (sec <= 0 || !cmd || !*cmd) {
+      setStatus("ERR:schedule invalid");
+      return;
+    }
+    if ((uint32_t)sec > BLE_SCHEDULE_DELAY_SEC_MAX) {
+      setStatus("ERR:schedule delay too long");
+      printf("[BLE] Schedule: delay_seconds %d exceeds max %u\n", sec, (unsigned)BLE_SCHEDULE_DELAY_SEC_MAX);
+      return;
+    }
+    size_t len = strlen(cmd);
+    if (len >= BLE_SCHEDULE_CMD_NAME_MAX) {
+      setStatus("ERR:schedule name long");
+      return;
+    }
+
+    char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX];
+    strncpy(commandCopy, cmd, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+    commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+
+    uint32_t delayMs = (uint32_t)sec * 1000UL;
+    unsigned long nowMs = millis();
+
+    {
+      ScheduleStateLock lock;
+      if (!lock) {
+        setStatus("ERR:schedule lock");
+        return;
+      }
+      strncpy(scheduledCommandName, commandCopy, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+      scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+      scheduledDelayMs = delayMs;
+      lastHeartbeatMs = nowMs;
+      scheduledArmed = true;
+    }
+    printf("[BLE] Schedule: armed %s in %u s\n", commandCopy, (unsigned)sec);
+    setStatus("OK:scheduled");
   }
 };
 
