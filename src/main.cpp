@@ -676,6 +676,52 @@ void handleSend(AsyncWebServerRequest *request) {
   }
 }
 
+void handleWsData(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t len) {
+  AwsFrameInfo *info = (AwsFrameInfo *)arg;
+  if (info->opcode != WS_TEXT) return;
+  if (len == 0) return;
+  JsonDocument req;
+  DeserializationError err = deserializeJson(req, data, len);
+  if (err) return;
+  if (!req["cmd"].is<const char *>() || String(req["cmd"].as<const char *>()) != "send") return;
+  String stype = req["type"] | "";
+  String sdata = req["data"] | "";
+  int length = req["length"] | 32;
+  String name = req["name"] | "";
+
+  if (stype.length() > MAX_PARAM_PROTOCOL || sdata.length() > MAX_PARAM_DATA || name.length() > MAX_PARAM_NAME) {
+    JsonDocument ack;
+    ack["ok"] = false;
+    ack["error"] = "Input too long";
+    String ackStr;
+    serializeJson(ack, ackStr);
+    client->text(ackStr);
+    return;
+  }
+
+  if (stype == "nec") {
+    if (sdata.length() > 0 && isHexValue(sdata.c_str()) && length > 0 && length <= 128) {
+      uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
+      irSender.queue(value, length, 1);
+      printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
+      JsonDocument ack;
+      ack["ok"] = true;
+      ack["msg"] = "Sent NEC " + sdata;
+      if (name.length() > 0) ack["name"] = name;
+      String ackStr;
+      serializeJson(ack, ackStr);
+      client->text(ackStr);
+    } else {
+      JsonDocument err;
+      err["ok"] = false;
+      err["error"] = "Invalid data or length";
+      String errStr;
+      serializeJson(err, errStr);
+      client->text(errStr);
+    }
+  }
+}
+
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_CONNECT) {
     // Send current last code so new client gets state
@@ -694,49 +740,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     serializeJson(doc, out);
     client->text(out);
   } else if (type == WS_EVT_DATA) {
-    AwsFrameInfo *info = (AwsFrameInfo *)arg;
-    if (info->opcode != WS_TEXT) return;
-    if (len == 0) return;
-    JsonDocument req;
-    DeserializationError err = deserializeJson(req, data, len);
-    if (err) return;
-    if (!req["cmd"].is<const char *>() || String(req["cmd"].as<const char *>()) != "send") return;
-    String stype = req["type"] | "";
-    String sdata = req["data"] | "";
-    int length = req["length"] | 32;
-    String name = req["name"] | "";
-
-    if (stype.length() > MAX_PARAM_PROTOCOL || sdata.length() > MAX_PARAM_DATA || name.length() > MAX_PARAM_NAME) {
-      JsonDocument ack;
-      ack["ok"] = false;
-      ack["error"] = "Input too long";
-      String ackStr;
-      serializeJson(ack, ackStr);
-      client->text(ackStr);
-      return;
-    }
-
-    if (stype == "nec") {
-      if (sdata.length() > 0 && isHexValue(sdata.c_str()) && length > 0 && length <= 128) {
-        uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
-        irSender.queue(value, length, 1);
-        printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
-        JsonDocument ack;
-        ack["ok"] = true;
-        ack["msg"] = "Sent NEC " + sdata;
-        if (name.length() > 0) ack["name"] = name;
-        String ackStr;
-        serializeJson(ack, ackStr);
-        client->text(ackStr);
-      } else {
-        JsonDocument err;
-        err["ok"] = false;
-        err["error"] = "Invalid data or length";
-        String errStr;
-        serializeJson(err, errStr);
-        client->text(errStr);
-      }
-    }
+    handleWsData(client, arg, data, len);
   }
 }
 
