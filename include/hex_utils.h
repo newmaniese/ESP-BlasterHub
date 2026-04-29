@@ -11,4 +11,8 @@ bool isHexValue(const char* s);
 // Truncates to 32 bits for compatibility with IR code representation.
 String uint64ToHex(uint64_t val);
 
+// Robustly parses a hex string into a uint32_t.
+// Returns false if the string is not valid hex, exceeds 32 bits, or contains trailing garbage.
+bool parseHex32(const char* s, uint32_t& out_value);
+
 #endif // HEX_UTILS_H

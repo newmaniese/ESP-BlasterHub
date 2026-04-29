@@ -40,6 +40,33 @@ void test_isHexValue_prefix(void) {
   TEST_ASSERT_FALSE(isHexValue("0XABC"));
 }
 
+void test_parseHex32_valid(void) {
+  uint32_t val = 0;
+  TEST_ASSERT_TRUE(parseHex32("FF827D", val));
+  TEST_ASSERT_EQUAL_UINT32(0xFF827D, val);
+
+  TEST_ASSERT_TRUE(parseHex32("FFFFFFFF", val));
+  TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFF, val);
+
+  TEST_ASSERT_TRUE(parseHex32("0", val));
+  TEST_ASSERT_EQUAL_UINT32(0, val);
+}
+
+void test_parseHex32_invalid(void) {
+  uint32_t val = 0;
+  // Exceeds 32-bit max
+  TEST_ASSERT_FALSE(parseHex32("100000000", val));
+  TEST_ASSERT_FALSE(parseHex32("FFFFFFFFFFFF", val));
+
+  // Trailing garbage / invalid chars
+  TEST_ASSERT_FALSE(parseHex32("FF827DG", val));
+  TEST_ASSERT_FALSE(parseHex32("0xFF827D", val));
+
+  // Empty/null
+  TEST_ASSERT_FALSE(parseHex32("", val));
+  TEST_ASSERT_FALSE(parseHex32(NULL, val));
+}
+
 void test_IrSender_isActive_basic(void) {
   IRsend mockIr;
   IrSender sender(mockIr);
@@ -90,6 +117,8 @@ int main(void) {
   RUN_TEST(test_isHexValue_empty);
   RUN_TEST(test_isHexValue_null);
   RUN_TEST(test_isHexValue_prefix);
+  RUN_TEST(test_parseHex32_valid);
+  RUN_TEST(test_parseHex32_invalid);
   RUN_TEST(test_IrSender_isActive_basic);
   RUN_TEST(test_IrSender_interruption);
   return UNITY_END();
