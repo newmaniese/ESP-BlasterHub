@@ -250,10 +250,15 @@ bool sendSavedCode(int index, String &outName) {
   uint16_t bits = entry["bits"] | 32;
 
   if (String(protocol).equalsIgnoreCase("NEC") && strlen(valueHex) > 0) {
-    uint32_t value = strtoul(valueHex, nullptr, 16);
-    irSender.queue(value, bits, 1);
-    printf("[IR] TX NEC 0x%s %db (%s)\n", valueHex, bits, outName.length() ? outName.c_str() : "no name");
-    return true;
+    uint32_t value;
+    if (parseHex32(valueHex, value)) {
+      irSender.queue(value, bits, 1);
+      printf("[IR] TX NEC 0x%s %db (%s)\n", valueHex, bits, outName.length() ? outName.c_str() : "no name");
+      return true;
+    } else {
+      printf("[IR] Invalid or out-of-range hex value for saved code #%d: %s\n", index, valueHex);
+      return false;
+    }
   }
 
   printf("[IR] Unsupported protocol for saved code #%d: %s\n", index, protocol);
@@ -663,11 +668,11 @@ void handleSend(AsyncWebServerRequest *request) {
   }
 
   if (type == "nec") {
-    if (!isHexValue(data.c_str())) {
-      request->send(400, "text/plain", "Invalid hex data");
+    uint32_t value;
+    if (!parseHex32(data.c_str(), value)) {
+      request->send(400, "text/plain", "Invalid hex data or out of range");
       return;
     }
-    uint32_t value = strtoul(data.c_str(), nullptr, 16);
     irSender.queue(value, length, repeat);
     printf("[IR] TX NEC 0x%s %db (no name)\n", data.c_str(), length);
     request->send(200, "text/plain", "Sent NEC " + data);
@@ -717,8 +722,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     }
 
     if (stype == "nec") {
-      if (sdata.length() > 0 && isHexValue(sdata.c_str()) && length > 0 && length <= 128) {
-        uint32_t value = strtoul(sdata.c_str(), nullptr, 16);
+      uint32_t value;
+      if (sdata.length() > 0 && length > 0 && length <= 128 && parseHex32(sdata.c_str(), value)) {
         irSender.queue(value, length, 1);
         printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
         JsonDocument ack;
