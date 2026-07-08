@@ -265,7 +265,7 @@ document.addEventListener('click', function (e) {
       }
     }
     // HTTP fallback
-    fetch(u).then(function (r) { return r.text(); }).then(function () {
+    fetch(u, { method: 'POST' }).then(function (r) { return r.text(); }).then(function () {
       t.textContent = 'Send';
       showModal(name);
       addLog('TX done (HTTP): ' + name, 'log-send');

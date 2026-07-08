@@ -797,7 +797,7 @@ void setup() {
   server.serveStatic("/app.js", LittleFS, "/app.js").setCacheControl("max-age=86400");
   server.on("/ip", HTTP_GET, [](AsyncWebServerRequest *request) { request->send(200, "text/plain", WiFi.localIP().toString()); });
   server.on("/last", HTTP_GET, handleLast);
-  server.on("/send", HTTP_GET, handleSend);
+  server.on("/send", HTTP_POST, handleSend);
   server.on("/save", HTTP_GET, handleSaveGet);
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) { /* body handled in onSaveBody */ }, nullptr, onSaveBody);
   ws.onEvent(onWsEvent);
