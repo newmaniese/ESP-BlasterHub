@@ -290,3 +290,99 @@ class TestSavedRename:
         })
         assert r.status_code == 400
         assert "error" in r.json()
+
+
+# ---------------------------------------------------------------------------
+# POST /saved/import
+# ---------------------------------------------------------------------------
+
+class TestSavedImport:
+    """Import an array of saved codes and verify they are saved."""
+
+    def test_import_success(self):
+        payload = [
+            {
+                "name": "_import_test_1_",
+                "protocol": "NEC",
+                "value": "11111111",
+                "bits": 32,
+            },
+            {
+                "name": "_import_test_2_",
+                "protocol": "RC5",
+                "value": "22222222",
+                "bits": 12,
+            }
+        ]
+        r = requests.post(url("/saved/import"), json=payload)
+        assert r.status_code == 200
+        body = r.json()
+        assert body.get("ok") is True
+        assert body.get("imported") == 2
+        assert body.get("skipped") == 0
+
+        # Verify they are in /saved and get their indices for cleanup
+        r2 = requests.get(url("/saved"))
+        items = r2.json()
+        indices_to_delete = []
+        names = []
+        for it in items:
+            if it.get("name") in ("_import_test_1_", "_import_test_2_"):
+                indices_to_delete.append(it.get("index"))
+                names.append(it.get("name"))
+
+        assert "_import_test_1_" in names
+        assert "_import_test_2_" in names
+
+        # Cleanup
+        for idx in indices_to_delete:
+            requests.post(url("/saved/delete"), params={"index": idx})
+
+    def test_import_invalid_json(self):
+        r = requests.post(
+            url("/saved/import"),
+            data="not json",
+            headers={"Content-Type": "application/json"}
+        )
+        assert r.status_code == 400
+
+    def test_import_not_array(self):
+        payload = {
+            "name": "wrong_format",
+            "protocol": "NEC",
+            "value": "11111111",
+            "bits": 32,
+        }
+        r = requests.post(url("/saved/import"), json=payload)
+        assert r.status_code == 400
+
+    def test_import_partial_success_skips_invalid(self):
+        payload = [
+            {
+                "name": "_import_valid_",
+                "protocol": "NEC",
+                "value": "33333333",
+                "bits": 32,
+            },
+            {
+                # Missing name, so the validation fails
+                "protocol": "NEC",
+                "value": "44444444",
+                "bits": 32,
+            },
+            "this is not an object",
+        ]
+
+        r = requests.post(url("/saved/import"), json=payload)
+        assert r.status_code == 200
+        body = r.json()
+        assert body.get("ok") is True
+        assert body.get("imported") == 1
+        assert body.get("skipped") == 2
+
+        # Cleanup the valid one
+        r2 = requests.get(url("/saved"))
+        items = r2.json()
+        for it in items:
+            if it.get("name") == "_import_valid_":
+                requests.post(url("/saved/delete"), params={"index": it.get("index")})
