@@ -154,39 +154,16 @@ String getSavedCodesJsonCompact() {
     const char *name = entry["name"] | "";
 
     // Build this entry in a fragment so we can check length before appending.
+    JsonDocument fragDoc;
+    fragDoc["i"] = i;
+    fragDoc["n"] = name;
+
+    String fragJson;
+    serializeJson(fragDoc, fragJson);
+
     frag = "";
     if (out.length() > 1) frag += ",";
-    frag += "{\"i\":";
-    frag += String(i);
-    frag += ",\"n\":\"";
-    const char *p = name;
-    while (*p) {
-      const char *start = p;
-      // Skip characters that don't need escaping
-      while (*p && *p != '"' && *p != '\\' && (unsigned char)*p >= 0x20) {
-        p++;
-      }
-      if (p > start) {
-        frag.concat(start, p - start);
-      }
-      if (*p) {
-        unsigned char c = (unsigned char)*p;
-        if (c == '"') frag += "\\\"";
-        else if (c == '\\') frag += "\\\\";
-        else if (c == '\b') frag += "\\b";
-        else if (c == '\t') frag += "\\t";
-        else if (c == '\n') frag += "\\n";
-        else if (c == '\f') frag += "\\f";
-        else if (c == '\r') frag += "\\r";
-        else {
-          char hex[7];
-          snprintf(hex, sizeof(hex), "\\u%04x", c);
-          frag += hex;
-        }
-        p++;
-      }
-    }
-    frag += "\"}";
+    frag += fragJson;
 
     if (out.length() + frag.length() + BLE_SAVED_TRUNCATED_SUFFIX_LEN > BLE_SAVED_CODES_MAX_LEN)
       break;
@@ -194,9 +171,14 @@ String getSavedCodesJsonCompact() {
   }
   if (i < n) {
     if (out.length() > 1) out += ",";
-    out += "{\"i\":-1,\"n\":\"\",\"_truncated\":true,\"_total\":";
-    out += n;
-    out += "}";
+    JsonDocument truncDoc;
+    truncDoc["i"] = -1;
+    truncDoc["n"] = "";
+    truncDoc["_truncated"] = true;
+    truncDoc["_total"] = n;
+    String truncJson;
+    serializeJson(truncDoc, truncJson);
+    out += truncJson;
   }
   out += "]";
   return out;
