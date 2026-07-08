@@ -47,6 +47,7 @@ uint32_t lastCodeSeq = 0;  // Incremented on each new IR decode; client polls /l
 
 IrCapture history[HISTORY_SIZE];
 int historyLen = 0;
+int historyHead = 0;
 
 Preferences savedCodes;
 static std::vector<String> g_savedCodesCache;
@@ -475,7 +476,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
       request->send(400, "text/plain", "No code to save; receive an IR code first.");
       return;
     }
-    const IrCapture &c = history[0];
+    const IrCapture &c = history[historyHead];
     protocol = c.protocol;
     valueHex = uint64ToHex(c.value);
     bits = c.bits;
@@ -633,7 +634,7 @@ void handleLast(AsyncWebServerRequest *request) {
   doc["seq"] = lastCodeSeq;
   doc["human"] = lastHumanReadable;
   doc["raw"] = lastRawJson;
-  String replayUrl = (historyLen > 0) ? replayUrlFor(history[0]) : "";
+  String replayUrl = (historyLen > 0) ? replayUrlFor(history[historyHead]) : "";
   doc["replayUrl"] = replayUrl;
   String out;
   serializeJson(doc, out);
@@ -735,11 +736,11 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     doc["seq"] = lastCodeSeq;
     doc["human"] = lastHumanReadable;
     doc["raw"] = lastRawJson;
-    doc["replayUrl"] = (historyLen > 0) ? replayUrlFor(history[0]) : "";
+    doc["replayUrl"] = (historyLen > 0) ? replayUrlFor(history[historyHead]) : "";
     if (historyLen > 0) {
-      doc["protocol"] = history[0].protocol;
-      doc["value"] = uint64ToHex(history[0].value);
-      doc["bits"] = history[0].bits;
+      doc["protocol"] = history[historyHead].protocol;
+      doc["value"] = uint64ToHex(history[historyHead].value);
+      doc["bits"] = history[historyHead].bits;
     }
     String out;
     serializeJson(doc, out);
@@ -849,11 +850,11 @@ void loop() {
     lastCodeSeq++;
 
     // Add to history (newest first)
-    for (int i = HISTORY_SIZE - 1; i > 0; i--) history[i] = history[i - 1];
-    history[0].protocol = typeToString(results.decode_type);
-    history[0].value = results.value;
-    history[0].bits = results.bits;
-    history[0].human = lastHumanReadable;
+    if (historyLen > 0) historyHead = (historyHead - 1 + HISTORY_SIZE) % HISTORY_SIZE;
+    history[historyHead].protocol = typeToString(results.decode_type);
+    history[historyHead].value = results.value;
+    history[historyHead].bits = results.bits;
+    history[historyHead].human = lastHumanReadable;
     if (historyLen < HISTORY_SIZE) historyLen++;
 
     printf("[IR] %s\n", lastHumanReadable.c_str());
@@ -865,10 +866,10 @@ void loop() {
       doc["seq"] = lastCodeSeq;
       doc["human"] = lastHumanReadable;
       doc["raw"] = lastRawJson;
-      doc["replayUrl"] = replayUrlFor(history[0]);
-      doc["protocol"] = history[0].protocol;
-      doc["value"] = uint64ToHex(history[0].value);
-      doc["bits"] = history[0].bits;
+      doc["replayUrl"] = replayUrlFor(history[historyHead]);
+      doc["protocol"] = history[historyHead].protocol;
+      doc["value"] = uint64ToHex(history[historyHead].value);
+      doc["bits"] = history[historyHead].bits;
       String out;
       serializeJson(doc, out);
       ws.textAll(out);
