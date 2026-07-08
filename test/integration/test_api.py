@@ -180,6 +180,16 @@ class TestSaveAndDelete:
         r = requests.post(url("/save"), json=payload)
         assert r.status_code == 400
 
+    def test_save_invalid_bits_returns_400(self):
+        payload = {
+            "name": "_test_code_bits_",
+            "protocol": "NEC",
+            "value": "DEADBEEF",
+            "bits": 256,
+        }
+        r = requests.post(url("/save"), json=payload)
+        assert r.status_code == 400
+
     def test_save_invalid_json_returns_400(self):
         r = requests.post(
             url("/save"),
@@ -206,6 +216,15 @@ class TestSaveGet:
         assert body.get("ok") is True
         # Cleanup
         requests.post(url("/saved/delete"), params={"index": body["index"]})
+
+    def test_save_via_query_invalid_length_returns_400(self):
+        r = requests.get(url("/save"), params={
+            "protocol": "NEC",
+            "value": "CAFE",
+            "length": 200,
+            "name": "_qtest_inv_",
+        })
+        assert r.status_code == 400
 
 
 # ---------------------------------------------------------------------------
