@@ -89,6 +89,20 @@ private:
 };
 
 // Must be called with SavedCodesLock held.
+template <typename T>
+static bool saveCodeToNVS(const T& doc, int index) {
+  if (measureJson(doc) >= SAVED_CODE_MAX) {
+    return false;
+  }
+  char buf[SAVED_CODE_MAX];
+  serializeJson(doc, buf, sizeof(buf));
+  String key = String(index);
+  savedCodes.putString(key.c_str(), buf);
+  g_savedCodesCache.push_back(String(buf));
+  return true;
+}
+
+// Must be called with SavedCodesLock held.
 static void ensureCacheLoaded() {
   if (g_cacheLoaded) return;
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
@@ -331,18 +345,13 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   obj["protocol"] = protocol;
   obj["value"] = valueHex;
   obj["bits"] = bits;
-  if (measureJson(doc) >= SAVED_CODE_MAX) {
+  if (!saveCodeToNVS(doc, n)) {
     savedCodes.end();
     request->send(413, "application/json", "{\"error\":\"Code too large\"}");
     return;
   }
-  char buf[SAVED_CODE_MAX];
-  serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
-  g_savedCodesCache.push_back(String(buf));
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -422,7 +431,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     entry["value"] = valueHex;
     entry["bits"] = bits;
 
-    if (measureJson(entry) >= SAVED_CODE_MAX) {
+    if (!saveCodeToNVS(entry, n)) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
         JsonObject e = errors.add<JsonObject>();
@@ -431,12 +440,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
       }
       continue;
     }
-    char buf[SAVED_CODE_MAX];
-    serializeJson(entry, buf, sizeof(buf));
 
-    String key = String(n);
-    savedCodes.putString(key.c_str(), buf);
-    g_savedCodesCache.push_back(String(buf));
     n++;
     outDoc["imported"] = (int)outDoc["imported"] + 1;
   }
@@ -493,18 +497,13 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   doc["protocol"] = protocol;
   doc["value"] = valueHex;
   doc["bits"] = bits;
-  if (measureJson(doc) >= SAVED_CODE_MAX) {
+  if (!saveCodeToNVS(doc, n)) {
     savedCodes.end();
     request->send(413, "application/json", "{\"error\":\"Code too large\"}");
     return;
   }
-  char buf[SAVED_CODE_MAX];
-  serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
-  g_savedCodesCache.push_back(String(buf));
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
