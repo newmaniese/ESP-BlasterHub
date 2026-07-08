@@ -50,6 +50,7 @@ int historyLen = 0;
 
 Preferences savedCodes;
 static std::vector<String> g_savedCodesCache;
+static std::vector<uint32_t> g_savedCodesIds;
 static bool g_cacheLoaded = false;
 
 // BLE callbacks and AsyncWebServer handlers run on different tasks, so NVS access
@@ -93,11 +94,39 @@ static void ensureCacheLoaded() {
   if (g_cacheLoaded) return;
   savedCodes.begin(SAVED_CODES_NAMESPACE, true);
   int n = savedCodes.getInt("n", 0);
+
+  size_t mapLen = savedCodes.getBytesLength("id_map");
+  g_savedCodesIds.clear();
   g_savedCodesCache.clear();
   g_savedCodesCache.reserve(n);
-  for (int i = 0; i < n; i++) {
-    g_savedCodesCache.push_back(savedCodes.getString(String(i).c_str(), "{}"));
+
+  if (mapLen > 0 && mapLen % sizeof(uint32_t) == 0) {
+    int count = mapLen / sizeof(uint32_t);
+    g_savedCodesIds.resize(count);
+    savedCodes.getBytes("id_map", g_savedCodesIds.data(), mapLen);
+    for (int i = 0; i < count; i++) {
+      g_savedCodesCache.push_back(savedCodes.getString(String(g_savedCodesIds[i]).c_str(), "{}"));
+    }
+  } else {
+    // Migration from old array-shifting schema
+    g_savedCodesIds.reserve(n);
+    for (int i = 0; i < n; i++) {
+      g_savedCodesIds.push_back(i);
+      g_savedCodesCache.push_back(savedCodes.getString(String(i).c_str(), "{}"));
+    }
+    // We must reopen in R/W mode to migrate, but since we were called with `true` for readonly,
+    // we need to re-open to write the migration.
+    savedCodes.end();
+    savedCodes.begin(SAVED_CODES_NAMESPACE, false);
+    if (n > 0) {
+      savedCodes.putBytes("id_map", g_savedCodesIds.data(), n * sizeof(uint32_t));
+    } else {
+      savedCodes.remove("id_map");
+    }
+    savedCodes.putInt("next_id", n);
+    savedCodes.remove("n"); // Remove old key to clean up
   }
+
   savedCodes.end();
   g_cacheLoaded = true;
 }
@@ -338,9 +367,15 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   }
   char buf[SAVED_CODE_MAX];
   serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
+
+  int next_id = savedCodes.getInt("next_id", n);
+  String key = String(next_id);
   savedCodes.putString(key.c_str(), buf);
-  savedCodes.putInt("n", n + 1);
+  savedCodes.putInt("next_id", next_id + 1);
+
+  g_savedCodesIds.push_back(next_id);
+  savedCodes.putBytes("id_map", g_savedCodesIds.data(), g_savedCodesIds.size() * sizeof(uint32_t));
+
   savedCodes.end();
   g_savedCodesCache.push_back(String(buf));
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
@@ -380,6 +415,7 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   ensureCacheLoaded();
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = (int)g_savedCodesCache.size();
+  int next_id = savedCodes.getInt("next_id", n);
 
   const int maxErrors = 12;
   for (size_t i = 0; i < in.size(); i++) {
@@ -434,14 +470,23 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
     char buf[SAVED_CODE_MAX];
     serializeJson(entry, buf, sizeof(buf));
 
-    String key = String(n);
+    String key = String(next_id);
     savedCodes.putString(key.c_str(), buf);
+
+    g_savedCodesIds.push_back(next_id);
     g_savedCodesCache.push_back(String(buf));
+
+    next_id++;
     n++;
     outDoc["imported"] = (int)outDoc["imported"] + 1;
   }
 
-  savedCodes.putInt("n", n);
+  savedCodes.putInt("next_id", next_id);
+  if (g_savedCodesIds.empty()) {
+    savedCodes.remove("id_map");
+  } else {
+    savedCodes.putBytes("id_map", g_savedCodesIds.data(), g_savedCodesIds.size() * sizeof(uint32_t));
+  }
   savedCodes.end();
   outDoc["total"] = n;
 
@@ -500,9 +545,15 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   }
   char buf[SAVED_CODE_MAX];
   serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
+
+  int next_id = savedCodes.getInt("next_id", n);
+  String key = String(next_id);
   savedCodes.putString(key.c_str(), buf);
-  savedCodes.putInt("n", n + 1);
+  savedCodes.putInt("next_id", next_id + 1);
+
+  g_savedCodesIds.push_back(next_id);
+  savedCodes.putBytes("id_map", g_savedCodesIds.data(), g_savedCodesIds.size() * sizeof(uint32_t));
+
   savedCodes.end();
   g_savedCodesCache.push_back(String(buf));
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
@@ -534,13 +585,17 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
-  for (int i = index; i < n - 1; i++) {
-    String nextRaw = g_savedCodesCache[i + 1];
-    savedCodes.putString(String(i).c_str(), nextRaw.c_str());
+
+  uint32_t idToRemove = g_savedCodesIds[index];
+  savedCodes.remove(String(idToRemove).c_str());
+  g_savedCodesIds.erase(g_savedCodesIds.begin() + index);
+  if (g_savedCodesIds.empty()) {
+    savedCodes.remove("id_map");
+  } else {
+    savedCodes.putBytes("id_map", g_savedCodesIds.data(), g_savedCodesIds.size() * sizeof(uint32_t));
   }
-  savedCodes.remove(String(n - 1).c_str());
-  savedCodes.putInt("n", n - 1);
   savedCodes.end();
+
   g_savedCodesCache.erase(g_savedCodesCache.begin() + index);
   request->send(200, "application/json", "{\"ok\":true,\"remaining\":" + String(n - 1) + "}");
 }
@@ -572,7 +627,8 @@ void handleSavedRename(AsyncWebServerRequest *request) {
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
-  String key = String(index);
+  uint32_t targetId = g_savedCodesIds[index];
+  String key = String(targetId);
   String raw = g_savedCodesCache[index];
   JsonDocument entry;
   DeserializationError err = deserializeJson(entry, raw);
