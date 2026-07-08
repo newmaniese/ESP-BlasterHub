@@ -822,9 +822,7 @@ void setup() {
   setupBLE();
 }
 
-void loop() {
-  irSender.loop();
-
+void handleHeartbeat() {
   // Heartbeat every 1s so you always see output after opening the monitor
   static uint32_t lastStatusPrint = 0;
   if (millis() - lastStatusPrint >= 1000) {
@@ -841,7 +839,9 @@ void loop() {
       printf("[IR] (WiFi not connected)\n");
     }
   }
+}
 
+void handleIRReceive() {
   // IR receive loop
   if (irrecv.decode(&results)) {
     lastHumanReadable = resultToHumanReadableBasic(&results);
@@ -876,7 +876,12 @@ void loop() {
 
     irrecv.resume();
   }
+}
 
+void loop() {
+  irSender.loop();
+  handleHeartbeat();
+  handleIRReceive();
   loopBLE();
 
   // AsyncWebServer handles HTTP in background.
