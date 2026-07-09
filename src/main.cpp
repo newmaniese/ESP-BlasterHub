@@ -319,6 +319,10 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   const char *protocol = doc["protocol"] | "UNKNOWN";
   const char *valueHex = doc["value"];
   uint16_t bits = doc["bits"] | 32;
+  if (bits < 1 || bits > 128) {
+    request->send(400, "application/json", "{\"error\":\"Invalid bits\"}");
+    return;
+  }
   if (!valueHex) {
     request->send(400, "application/json", "{\"error\":\"Missing value\"}");
     return;
@@ -484,6 +488,10 @@ void handleSaveGet(AsyncWebServerRequest *request) {
     protocol = c.protocol;
     valueHex = uint64ToHex(c.value);
     bits = c.bits;
+  }
+  if (bits < 1 || bits > 128) {
+    request->send(400, "text/plain", "Invalid bits");
+    return;
   }
   SavedCodesLock lock;
   if (!lock) {
