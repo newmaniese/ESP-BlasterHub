@@ -84,12 +84,12 @@ class TestLast:
 
 
 # ---------------------------------------------------------------------------
-# GET /send
+# POST /send
 # ---------------------------------------------------------------------------
 
 class TestSend:
     def test_send_nec_success(self):
-        r = requests.get(url("/send"), params={
+        r = requests.post(url("/send"), params={
             "type": "nec",
             "data": "FF827D",
             "length": 32,
@@ -98,11 +98,11 @@ class TestSend:
         assert "Sent NEC" in r.text
 
     def test_send_missing_params(self):
-        r = requests.get(url("/send"))
+        r = requests.post(url("/send"))
         assert r.status_code == 400
 
     def test_send_unsupported_type(self):
-        r = requests.get(url("/send"), params={
+        r = requests.post(url("/send"), params={
             "type": "rc5",
             "data": "1234",
         })
@@ -110,7 +110,7 @@ class TestSend:
         assert "Unsupported" in r.text
 
     def test_send_invalid_repeat(self):
-        r = requests.get(url("/send"), params={
+        r = requests.post(url("/send"), params={
             "type": "nec",
             "data": "FF827D",
             "repeat": 25,
@@ -119,7 +119,7 @@ class TestSend:
         assert "Invalid repeat" in r.text
 
     def test_send_invalid_length(self):
-        r = requests.get(url("/send"), params={
+        r = requests.post(url("/send"), params={
             "type": "nec",
             "data": "FF827D",
             "length": 150,
