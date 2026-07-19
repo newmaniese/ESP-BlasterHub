@@ -356,37 +356,28 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
-// POST /saved/import — body JSON array of { "name", "protocol", "value", "bits" }.
-// Appends valid entries to NVS and skips invalid entries with a summary.
-void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-  String body;
-  if (!accumulateBody(request, data, len, index, total, 10240, "{\"ok\":false,\"error\":\"Payload too large\"}", body)) {
-    return;
-  }
-
-  JsonDocument inputDoc;
+static bool parseAndValidateImport(const String &body, JsonDocument &inputDoc, String &errorMsg) {
   DeserializationError err = deserializeJson(inputDoc, body);
   if (err) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
-    return;
+    errorMsg = "{\"ok\":false,\"error\":\"Invalid JSON\"}";
+    return false;
   }
   if (!inputDoc.is<JsonArray>()) {
-    request->send(400, "application/json", "{\"ok\":false,\"error\":\"Expected JSON array\"}");
-    return;
+    errorMsg = "{\"ok\":false,\"error\":\"Expected JSON array\"}";
+    return false;
   }
+  return true;
+}
 
-  JsonArray in = inputDoc.as<JsonArray>();
-  JsonDocument outDoc;
+static bool saveImportedCodes(JsonArray in, JsonDocument &outDoc) {
   outDoc["ok"] = true;
   outDoc["imported"] = 0;
   outDoc["skipped"] = 0;
   JsonArray errors = outDoc["errors"].to<JsonArray>();
 
   SavedCodesLock lock;
-  if (!lock) {
-    request->send(500, "application/json", "{\"ok\":false,\"error\":\"Storage unavailable\"}");
-    return;
-  }
+  if (!lock) return false;
+
   ensureCacheLoaded();
   savedCodes.begin(SAVED_CODES_NAMESPACE, false);
   int n = (int)g_savedCodesCache.size();
@@ -454,6 +445,29 @@ void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len
   savedCodes.putInt("n", n);
   savedCodes.end();
   outDoc["total"] = n;
+  return true;
+}
+
+// POST /saved/import — body JSON array of { "name", "protocol", "value", "bits" }.
+// Appends valid entries to NVS and skips invalid entries with a summary.
+void onSavedImportBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+  String body;
+  if (!accumulateBody(request, data, len, index, total, 10240, "{\"ok\":false,\"error\":\"Payload too large\"}", body)) {
+    return;
+  }
+
+  JsonDocument inputDoc;
+  String errorMsg;
+  if (!parseAndValidateImport(body, inputDoc, errorMsg)) {
+    request->send(400, "application/json", errorMsg);
+    return;
+  }
+
+  JsonDocument outDoc;
+  if (!saveImportedCodes(inputDoc.as<JsonArray>(), outDoc)) {
+    request->send(500, "application/json", "{\"ok\":false,\"error\":\"Storage unavailable\"}");
+    return;
+  }
 
   String out;
   serializeJson(outDoc, out);
