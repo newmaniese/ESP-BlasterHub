@@ -24,6 +24,8 @@
 
 #if BLE_USE_PASSKEY && !defined(BLE_PASSKEY)
 #error "BLE_PASSKEY must be defined (e.g. in secrets.h) when BLE_USE_PASSKEY is enabled"
+#elif BLE_USE_PASSKEY && (BLE_PASSKEY == 123456)
+#error "BLE_PASSKEY must be changed from the default 123456 for security"
 #endif
 
 // ---------------------------------------------------------------------------
