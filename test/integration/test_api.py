@@ -334,8 +334,8 @@ class TestSavedImport:
         assert "_import_test_1_" in names
         assert "_import_test_2_" in names
 
-        # Cleanup
-        for idx in indices_to_delete:
+        # Cleanup highest indices first so earlier deletes do not shift later ones
+        for idx in sorted(indices_to_delete, reverse=True):
             requests.post(url("/saved/delete"), params={"index": idx})
 
     def test_import_invalid_json(self):
