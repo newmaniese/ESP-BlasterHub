@@ -67,6 +67,19 @@ void test_parseHex32_invalid(void) {
   TEST_ASSERT_FALSE(parseHex32(NULL, val));
 }
 
+void test_uint64ToHex(void) {
+  TEST_ASSERT_EQUAL_STRING("00000000", uint64ToHex(0).c_str());
+  TEST_ASSERT_EQUAL_STRING("0000000A", uint64ToHex(10).c_str());
+  TEST_ASSERT_EQUAL_STRING("000000FF", uint64ToHex(255).c_str());
+  TEST_ASSERT_EQUAL_STRING("00001234", uint64ToHex(0x1234).c_str());
+  TEST_ASSERT_EQUAL_STRING("12345678", uint64ToHex(0x12345678).c_str());
+  TEST_ASSERT_EQUAL_STRING("FFFFFFFF", uint64ToHex(0xFFFFFFFF).c_str());
+
+  // Truncation of upper 32 bits
+  TEST_ASSERT_EQUAL_STRING("12345678", uint64ToHex(0x9999999912345678ULL).c_str());
+  TEST_ASSERT_EQUAL_STRING("00000000", uint64ToHex(0xFFFFFFFF00000000ULL).c_str());
+}
+
 void test_IrSender_isActive_basic(void) {
   IRsend mockIr;
   IrSender sender(mockIr);
@@ -119,6 +132,7 @@ int main(void) {
   RUN_TEST(test_isHexValue_prefix);
   RUN_TEST(test_parseHex32_valid);
   RUN_TEST(test_parseHex32_invalid);
+  RUN_TEST(test_uint64ToHex);
   RUN_TEST(test_IrSender_isActive_basic);
   RUN_TEST(test_IrSender_interruption);
   return UNITY_END();
