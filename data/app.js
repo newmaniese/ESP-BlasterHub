@@ -111,17 +111,17 @@ function renderSavedList(items) {
       var value = it.value || '0';
       var bits = it.bits || 32;
       var sendUrl = (protocol.toUpperCase() === 'NEC')
-        ? ('/send?type=nec&data=' + encodeURIComponent(value) + '&length=' + bits)
+        ? ('/send?type=nec&data=' + encodeURIComponent(value) + '&length=' + encodeURIComponent(bits))
         : '';
 
-      h += '<div class="saved-item" data-index="' + idx + '" data-protocol="' + esc(protocol) + '" data-value="' + esc(value) + '" data-bits="' + bits + '">';
+      h += '<div class="saved-item" data-index="' + esc(idx) + '" data-protocol="' + esc(protocol) + '" data-value="' + esc(value) + '" data-bits="' + esc(bits) + '">';
       h += '<span class="saved-name">' + esc(name) + '</span>';
       h += sendUrl
         ? ' <a href="' + sendUrl + '" class="btn btn-send" title="Send">Send</a>'
         : ' <span class="saved-na">(NEC only)</span>';
-      h += ' <a href="#" class="btn btn-rename" data-index="' + idx + '" title="Rename">Edit</a>';
-      h += ' <a href="#" class="btn btn-delete" data-index="' + idx + '" title="Delete">Del</a>';
-      h += '<span class="saved-meta">' + esc(protocol) + ' 0x' + esc(value) + ' ' + bits + 'b</span>';
+      h += ' <a href="#" class="btn btn-rename" data-index="' + esc(idx) + '" title="Rename">Edit</a>';
+      h += ' <a href="#" class="btn btn-delete" data-index="' + esc(idx) + '" title="Delete">Del</a>';
+      h += '<span class="saved-meta">' + esc(protocol) + ' 0x' + esc(value) + ' ' + esc(bits) + 'b</span>';
       h += '</div>';
     });
   }
