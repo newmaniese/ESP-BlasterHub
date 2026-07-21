@@ -40,6 +40,23 @@ void test_isHexValue_prefix(void) {
   TEST_ASSERT_FALSE(isHexValue("0XABC"));
 }
 
+void test_isHexValue_edge_cases(void) {
+  // ASCII boundaries outside valid hex ranges
+  TEST_ASSERT_FALSE(isHexValue("/")); // just before '0'
+  TEST_ASSERT_FALSE(isHexValue(":")); // just after '9'
+  TEST_ASSERT_FALSE(isHexValue("@")); // just before 'A'
+  TEST_ASSERT_FALSE(isHexValue("G")); // just after 'F'
+  TEST_ASSERT_FALSE(isHexValue("`")); // just before 'a'
+  TEST_ASSERT_FALSE(isHexValue("g")); // just after 'f'
+
+  // Extended ASCII / negative signed chars
+  TEST_ASSERT_FALSE(isHexValue("\x80"));
+  TEST_ASSERT_FALSE(isHexValue("\xFF"));
+
+  // Long valid hex string
+  TEST_ASSERT_TRUE(isHexValue("0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"));
+}
+
 void test_parseHex32_valid(void) {
   uint32_t val = 0;
   TEST_ASSERT_TRUE(parseHex32("FF827D", val));
@@ -130,6 +147,7 @@ int main(void) {
   RUN_TEST(test_isHexValue_empty);
   RUN_TEST(test_isHexValue_null);
   RUN_TEST(test_isHexValue_prefix);
+  RUN_TEST(test_isHexValue_edge_cases);
   RUN_TEST(test_parseHex32_valid);
   RUN_TEST(test_parseHex32_invalid);
   RUN_TEST(test_uint64ToHex);
