@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <ctype.h>
 #include <WiFi.h>
 #include <LittleFS.h>
 #include <ESPAsyncWebServer.h>
