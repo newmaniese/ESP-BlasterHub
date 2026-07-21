@@ -11,6 +11,7 @@ Dependencies: pytest, requests  (see requirements-test.txt)
 
 import os
 import re
+import ipaddress
 
 import pytest
 import requests
@@ -59,7 +60,10 @@ class TestIp:
 
     def test_looks_like_ipv4(self):
         r = requests.get(url("/ip"))
-        assert re.match(r"\d+\.\d+\.\d+\.\d+", r.text.strip())
+        ip_str = r.text.strip()
+        # Strictly validate that it is a valid IPv4 address
+        ip_obj = ipaddress.ip_address(ip_str)
+        assert isinstance(ip_obj, ipaddress.IPv4Address)
 
 
 # ---------------------------------------------------------------------------
