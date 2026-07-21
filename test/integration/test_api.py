@@ -9,6 +9,7 @@ variable to the base URL before running, e.g.:
 Dependencies: pytest, requests  (see requirements-test.txt)
 """
 
+import ipaddress
 import os
 import re
 
@@ -59,7 +60,8 @@ class TestIp:
 
     def test_looks_like_ipv4(self):
         r = requests.get(url("/ip"))
-        assert re.match(r"\d+\.\d+\.\d+\.\d+", r.text.strip())
+        # This will raise an ipaddress.AddressValueError if the IP is not valid
+        ipaddress.IPv4Address(r.text.strip())
 
 
 # ---------------------------------------------------------------------------
