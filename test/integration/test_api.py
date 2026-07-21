@@ -207,7 +207,7 @@ class TestSaveAndDelete:
 
 class TestSaveGet:
     def test_save_via_query(self):
-        r = requests.get(url("/save"), params={
+        r = requests.post(url("/save"), params={
             "protocol": "NEC",
             "value": "CAFE",
             "length": 32,
@@ -220,7 +220,7 @@ class TestSaveGet:
         requests.post(url("/saved/delete"), params={"index": body["index"]})
 
     def test_save_via_query_invalid_length_returns_400(self):
-        r = requests.get(url("/save"), params={
+        r = requests.post(url("/save"), params={
             "protocol": "NEC",
             "value": "CAFE",
             "length": 200,
