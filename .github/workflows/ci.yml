@@ -23,7 +23,7 @@ jobs:
         pip install platformio
 
     - name: Create secrets.h
-      run: cp src/secrets.h.example src/secrets.h
+      run: cp src/secrets.h.example src/secrets.h && sed -i "s/#define BLE_PASSKEY 123456/#define BLE_PASSKEY 654321/" src/secrets.h
 
     - name: Build firmware
       run: pio run
