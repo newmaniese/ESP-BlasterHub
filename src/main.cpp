@@ -302,6 +302,30 @@ static bool accumulateBody(AsyncWebServerRequest *request, uint8_t *data, size_t
   return true;
 }
 
+/**
+ * Helper to serialize a JSON document to a buffer, validate its size, and save it to NVS.
+ * Also updates the RAM cache. Returns true on success, false if the document is too large.
+ */
+template <typename T>
+static bool saveCodeToNVS(const T& doc, int index) {
+  if (measureJson(doc) >= SAVED_CODE_MAX) {
+    return false;
+  }
+  char buf[SAVED_CODE_MAX];
+  serializeJson(doc, buf, sizeof(buf));
+
+  String key = String(index);
+  savedCodes.putString(key.c_str(), buf);
+
+  if (index == (int)g_savedCodesCache.size()) {
+    g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
+  } else if (index < (int)g_savedCodesCache.size()) {
+    g_savedCodesCache[index] = {String(buf), String(doc["name"] | "")};
+  }
+
+  return true;
+}
+
 // POST /save — body JSON: { "name": "Power", "protocol": "NEC", "value": "FF827D", "bits": 32 }
 // Body handler accumulates and processes when complete.
 void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
@@ -341,18 +365,13 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   obj["protocol"] = protocol;
   obj["value"] = valueHex;
   obj["bits"] = bits;
-  if (measureJson(doc) >= SAVED_CODE_MAX) {
+  if (!saveCodeToNVS(doc, n)) {
     savedCodes.end();
     request->send(413, "application/json", "{\"error\":\"Code too large\"}");
     return;
   }
-  char buf[SAVED_CODE_MAX];
-  serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
-  g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -423,7 +442,7 @@ static bool saveImportedCodes(JsonArray in, JsonDocument &outDoc) {
     entry["value"] = valueHex;
     entry["bits"] = bits;
 
-    if (measureJson(entry) >= SAVED_CODE_MAX) {
+    if (!saveCodeToNVS(entry, n)) {
       outDoc["skipped"] = (int)outDoc["skipped"] + 1;
       if ((int)errors.size() < maxErrors) {
         JsonObject e = errors.add<JsonObject>();
@@ -432,12 +451,7 @@ static bool saveImportedCodes(JsonArray in, JsonDocument &outDoc) {
       }
       continue;
     }
-    char buf[SAVED_CODE_MAX];
-    serializeJson(entry, buf, sizeof(buf));
 
-    String key = String(n);
-    savedCodes.putString(key.c_str(), buf);
-    g_savedCodesCache.push_back({String(buf), String(entry["name"] | "")});
     n++;
     outDoc["imported"] = (int)outDoc["imported"] + 1;
   }
@@ -521,18 +535,13 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   doc["protocol"] = protocol;
   doc["value"] = valueHex;
   doc["bits"] = bits;
-  if (measureJson(doc) >= SAVED_CODE_MAX) {
+  if (!saveCodeToNVS(doc, n)) {
     savedCodes.end();
     request->send(413, "application/json", "{\"error\":\"Code too large\"}");
     return;
   }
-  char buf[SAVED_CODE_MAX];
-  serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
-  g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -610,16 +619,12 @@ void handleSavedRename(AsyncWebServerRequest *request) {
     return;
   }
   entry["name"] = newName;
-  if (measureJson(entry) >= SAVED_CODE_MAX) {
+  if (!saveCodeToNVS(entry, index)) {
     savedCodes.end();
     request->send(413, "application/json", "{\"error\":\"Name too long\"}");
     return;
   }
-  char buf[SAVED_CODE_MAX];
-  serializeJson(entry, buf, sizeof(buf));
-  savedCodes.putString(key.c_str(), buf);
   savedCodes.end();
-  g_savedCodesCache[index] = {String(buf), String(entry["name"] | "")};
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
 }
 
