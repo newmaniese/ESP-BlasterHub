@@ -155,51 +155,63 @@ String getSavedCodesJsonCompact() {
   out.reserve(BLE_SAVED_CODES_MAX_LEN);
   out = "[";
   int i = 0;
-  String frag;
-  frag.reserve(128);
-  for (; i < n; i++) {
-    JsonDocument entry;
-    deserializeJson(entry, g_savedCodesCache[i].raw);
-    const char *name = entry["name"] | "";
 
-    // Build this entry in a fragment so we can check length before appending.
-    frag = "";
-    if (out.length() > 1) frag += ",";
-    frag += "{\"i\":";
-    frag += String(i);
-    frag += ",\"n\":\"";
+  // Use a stack buffer to build fragments much faster than String concatenation
+  char fragBuf[256];
+
+  for (; i < n; i++) {
+    // Avoid full JSON deserialization by using the pre-parsed cached name
+    const char *name = g_savedCodesCache[i].name.c_str();
+
+    int len = 0;
+    if (out.length() > 1) {
+      fragBuf[len++] = ',';
+    }
+
+    len += snprintf(fragBuf + len, sizeof(fragBuf) - len, "{\"i\":%d,\"n\":\"", i);
+
     const char *p = name;
-    while (*p) {
+    // Keep 10 bytes margin in buffer for escapes and ending characters
+    while (*p && len < (int)sizeof(fragBuf) - 10) {
       const char *start = p;
       // Skip characters that don't need escaping
       while (*p && *p != '"' && *p != '\\' && (unsigned char)*p >= 0x20) {
         p++;
       }
-      if (p > start) {
-        frag.concat(start, p - start);
+
+      int chunk = p - start;
+      if (chunk > 0) {
+        if (len + chunk >= (int)sizeof(fragBuf) - 10) {
+          // Truncate to available space to prevent buffer overflow,
+          // though this shouldn't happen with valid JSON names < 64 chars
+          chunk = (sizeof(fragBuf) - 10) - len;
+        }
+        memcpy(fragBuf + len, start, chunk);
+        len += chunk;
       }
-      if (*p) {
+
+      if (*p && len < (int)sizeof(fragBuf) - 10) {
         unsigned char c = (unsigned char)*p;
-        if (c == '"') frag += "\\\"";
-        else if (c == '\\') frag += "\\\\";
-        else if (c == '\b') frag += "\\b";
-        else if (c == '\t') frag += "\\t";
-        else if (c == '\n') frag += "\\n";
-        else if (c == '\f') frag += "\\f";
-        else if (c == '\r') frag += "\\r";
+        if (c == '"') { fragBuf[len++]='\\'; fragBuf[len++]='"'; }
+        else if (c == '\\') { fragBuf[len++]='\\'; fragBuf[len++]='\\'; }
+        else if (c == '\b') { fragBuf[len++]='\\'; fragBuf[len++]='b'; }
+        else if (c == '\t') { fragBuf[len++]='\\'; fragBuf[len++]='t'; }
+        else if (c == '\n') { fragBuf[len++]='\\'; fragBuf[len++]='n'; }
+        else if (c == '\f') { fragBuf[len++]='\\'; fragBuf[len++]='f'; }
+        else if (c == '\r') { fragBuf[len++]='\\'; fragBuf[len++]='r'; }
         else {
-          char hex[7];
-          snprintf(hex, sizeof(hex), "\\u%04x", c);
-          frag += hex;
+          len += snprintf(fragBuf + len, sizeof(fragBuf) - len, "\\u%04x", c);
         }
         p++;
       }
     }
-    frag += "\"}";
+    fragBuf[len++] = '"';
+    fragBuf[len++] = '}';
+    fragBuf[len] = '\0';
 
-    if (out.length() + frag.length() + BLE_SAVED_TRUNCATED_SUFFIX_LEN > BLE_SAVED_CODES_MAX_LEN)
+    if (out.length() + len + BLE_SAVED_TRUNCATED_SUFFIX_LEN > BLE_SAVED_CODES_MAX_LEN)
       break;
-    out += frag;
+    out += fragBuf;
   }
   if (i < n) {
     if (out.length() > 1) out += ",";
