@@ -101,7 +101,9 @@ static void ensureCacheLoaded() {
   g_savedCodesCache.clear();
   g_savedCodesCache.reserve(n);
   for (int i = 0; i < n; i++) {
-    String raw = savedCodes.getString(String(i).c_str(), "{}");
+    char keyBuf[16];
+    snprintf(keyBuf, sizeof(keyBuf), "%d", i);
+    String raw = savedCodes.getString(keyBuf, "{}");
     JsonDocument entry;
     deserializeJson(entry, raw);
     String name = entry["name"] | "";
@@ -348,8 +350,9 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   }
   char buf[SAVED_CODE_MAX];
   serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
+  char keyBuf[16];
+  snprintf(keyBuf, sizeof(keyBuf), "%d", n);
+  savedCodes.putString(keyBuf, buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
   g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
@@ -435,8 +438,9 @@ static bool saveImportedCodes(JsonArray in, JsonDocument &outDoc) {
     char buf[SAVED_CODE_MAX];
     serializeJson(entry, buf, sizeof(buf));
 
-    String key = String(n);
-    savedCodes.putString(key.c_str(), buf);
+    char keyBuf[16];
+    snprintf(keyBuf, sizeof(keyBuf), "%d", n);
+    savedCodes.putString(keyBuf, buf);
     g_savedCodesCache.push_back({String(buf), String(entry["name"] | "")});
     n++;
     outDoc["imported"] = (int)outDoc["imported"] + 1;
@@ -528,8 +532,9 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   }
   char buf[SAVED_CODE_MAX];
   serializeJson(doc, buf, sizeof(buf));
-  String key = String(n);
-  savedCodes.putString(key.c_str(), buf);
+  char keyBuf[16];
+  snprintf(keyBuf, sizeof(keyBuf), "%d", n);
+  savedCodes.putString(keyBuf, buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
   g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
@@ -564,9 +569,13 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
   }
   for (int i = index; i < n - 1; i++) {
     String nextRaw = g_savedCodesCache[i + 1].raw;
-    savedCodes.putString(String(i).c_str(), nextRaw.c_str());
+    char keyBuf[16];
+    snprintf(keyBuf, sizeof(keyBuf), "%d", i);
+    savedCodes.putString(keyBuf, nextRaw.c_str());
   }
-  savedCodes.remove(String(n - 1).c_str());
+  char keyBufLast[16];
+  snprintf(keyBufLast, sizeof(keyBufLast), "%d", n - 1);
+  savedCodes.remove(keyBufLast);
   savedCodes.putInt("n", n - 1);
   savedCodes.end();
   g_savedCodesCache.erase(g_savedCodesCache.begin() + index);
@@ -600,7 +609,8 @@ void handleSavedRename(AsyncWebServerRequest *request) {
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
-  String key = String(index);
+  char keyBuf[16];
+  snprintf(keyBuf, sizeof(keyBuf), "%d", index);
   String raw = g_savedCodesCache[index].raw;
   JsonDocument entry;
   DeserializationError err = deserializeJson(entry, raw);
@@ -617,7 +627,7 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   }
   char buf[SAVED_CODE_MAX];
   serializeJson(entry, buf, sizeof(buf));
-  savedCodes.putString(key.c_str(), buf);
+  savedCodes.putString(keyBuf, buf);
   savedCodes.end();
   g_savedCodesCache[index] = {String(buf), String(entry["name"] | "")};
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
