@@ -8,7 +8,7 @@ The IR Blaster exposes a BLE GATT service that lets a paired computer (or phone)
 
 - **Transport:** Bluetooth Low Energy 5.0 (ESP32-C3 supports BLE only, not Classic Bluetooth).
 - **Library:** Built-in Arduino-ESP32 BLE (Bluedroid stack). The `huge_app.csv` partition scheme provides enough flash for BLE + WiFi + IRremote.
-- **Security:** Bonding + encryption (LE Secure Connections). By default pairing is **Just Works** (no passkey). You can enable passkey entry in [`src/secrets.h`](../src/secrets.h.example) by setting `BLE_USE_PASSKEY` to `1` and defining a `BLE_PASSKEY`.
+- **Security:** Bonding + encryption (LE Secure Connections). By default pairing requires a passkey. You can set your passkey in [`src/secrets.h`](../src/secrets.h.example) by defining `BLE_PASSKEY`. To disable the passkey requirement ("Just Works"), set `BLE_USE_PASSKEY` to `0`.
 - **Reconnection:** The ESP32 restarts advertising after any disconnect, so a bonded client reconnects automatically when back in range.
 
 BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue to work normally.
@@ -114,8 +114,8 @@ sequenceDiagram
 
 1. Power on the ESP32. It begins advertising as **"IR Blaster"**.
 2. On your Mac (or phone), scan for BLE devices. You will see "IR Blaster" with the service UUID `e97a0001-…`.
-3. Connect. With the default **Just Works** mode (`BLE_USE_PASSKEY` = 0), no passkey is required — pairing completes automatically and the link is encrypted and bonded.
-4. If you have enabled passkey mode (`BLE_USE_PASSKEY` = 1 in `src/secrets.h`), the ESP32 displays a 6-digit passkey on the serial monitor; enter it in the pairing dialog on your Mac/phone.
+3. Connect. With the default passkey mode (`BLE_USE_PASSKEY` = 1 in `src/secrets.h`), the ESP32 displays a 6-digit passkey on the serial monitor; enter it in the pairing dialog on your Mac/phone.
+4. If you have disabled passkey mode (`BLE_USE_PASSKEY` = 0 in `src/secrets.h`), no passkey is required — pairing completes automatically and the link is encrypted and bonded.
 5. Once paired, the bond keys are stored in NVS on both devices.
 
 ### Subsequent connections
@@ -158,7 +158,7 @@ All command names and delays are configured on the client; the ESP32 only provid
 Before building a dedicated app, you can verify BLE operation using the free **nRF Connect** app (available for macOS, iOS, and Android):
 
 1. Open nRF Connect and scan for devices. Find **"IR Blaster"**.
-2. Tap **Connect**. With default firmware no passkey is needed; if you enabled `BLE_USE_PASSKEY`, enter the passkey shown on Serial.
+2. Tap **Connect**. With default firmware, enter the passkey shown on Serial; if you disabled `BLE_USE_PASSKEY`, no passkey is needed.
 3. Expand the service `e97a0001-…`. You will see four characteristics.
 4. **Read** `e97a0002-…` (Saved Codes) — you should see the JSON array of your stored commands.
 5. **Subscribe** to notifications on `e97a0004-…` (Status).
