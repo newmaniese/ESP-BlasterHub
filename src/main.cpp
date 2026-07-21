@@ -826,8 +826,8 @@ void setup() {
   server.on("/ip", HTTP_GET, [](AsyncWebServerRequest *request) { request->send(200, "text/plain", WiFi.localIP().toString()); });
   server.on("/last", HTTP_GET, handleLast);
   server.on("/send", HTTP_POST, handleSend);
-  server.on("/save", HTTP_GET, handleSaveGet);
-  server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) { /* body handled in onSaveBody */ }, nullptr, onSaveBody);
+  // GET removed for security
+  server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) { if (request->contentLength() == 0) handleSaveGet(request); }, nullptr, onSaveBody);
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
   server.on("/saved", HTTP_GET, handleSaved);

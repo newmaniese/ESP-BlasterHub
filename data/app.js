@@ -165,7 +165,7 @@ function setLast(data) {
   if (r) {
     html += '<a href="' + esc(r) + '" class="btn btn-send" id="last-replay">Replay</a> ';
   }
-  html += '<form id="form-save-last" class="js-save-form" action="/save" method="get" style="display:inline-flex;gap:0.35rem;align-items:center;">';
+  html += '<form id="form-save-last" class="js-save-form" action="/save" method="post" style="display:inline-flex;gap:0.35rem;align-items:center;">';
   html += '<input type="text" name="name" placeholder="Name" style="padding:0.3rem 0.4rem;border:1px solid #ccc;border-radius:6px;font-size:0.9rem;width:8rem;">';
   html += ' <button type="submit" class="btn btn-save-last">Save</button></form>';
   a.innerHTML = html;
@@ -323,7 +323,7 @@ document.addEventListener('click', function (e) {
             + '&value=' + encodeURIComponent(value)
             + '&length=' + encodeURIComponent(length)
             + '&name=' + encodeURIComponent(pname);
-    fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+    fetch(url, { method: 'POST' }).then(function (r) { return r.json(); }).then(function (d) {
       if (d.ok) {
         showModal('Saved as ' + (pname || 'unnamed'));
         addLog('Saved: ' + (pname || 'unnamed'), 'log-send');
@@ -365,7 +365,7 @@ document.addEventListener('submit', function (e) {
   var f = e.target;
   var p = new URLSearchParams(new FormData(f));
   var name = ((p.get('name') || '') + '').trim();
-  fetch('/save?' + p.toString())
+  fetch('/save?' + p.toString(), { method: 'POST' })
     .then(function (r) { return r.json(); })
     .then(function (d) {
       if (d.ok) {
