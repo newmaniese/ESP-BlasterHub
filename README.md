@@ -22,21 +22,33 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 
    ![Wiring Diagram](docs/assets/wiring-breadboard.svg)
 
-2. **WiFi**  
-   Set your network in `secrets.h` (e.g. `WIFI_SSID`, `WIFI_PASS`).
+2. **WiFi / build options**  
+   Copy `.env.example` to `.env` and set `WIFI_SSID` / `WIFI_PASS` (used for local config). Firmware WiFi still comes from `src/secrets.h` (copy from `src/secrets.h.example`).
+
+   For **transmit-only** boards (no IR receiver), set in `.env`:
+   ```bash
+   IR_RECV_ENABLED=0
+   ```
+   PlatformIO reads this at build time and disables GPIO 10 receive (stops noise/`UNKNOWN` spam). Default is `1`.
+
+   To fire each send multiple times (useful for flaky targets), set:
+   ```bash
+   IR_SEND_REPEAT=3
+   ```
+   Default is `1` (range 1–20). Used for saved-code Send (UI/BLE) and as the default when HTTP/WS omit `repeat`.
 
 3. **Build and install** (firmware + frontend)
+   ```bash
+   make build
+   ```
+   Use this on first install, or any time files in `data/` change.  
+   For firmware-only changes, `make upload` is enough. Frontend-only: `make fs`.
+
+   Equivalent PlatformIO commands:
    ```bash
    pio run --target upload
    pio run --target buildfs
    pio run --target uploadfs
-   ```
-   Use this full sequence on first install, or any time files in `data/` change.  
-   For firmware-only changes, `pio run --target upload` is enough.
-
-   Optional one-liner:
-   ```bash
-   pio run --target upload && pio run --target buildfs && pio run --target uploadfs
    ```
 
 4. **Serial monitor** (optional)

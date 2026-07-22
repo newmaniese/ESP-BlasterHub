@@ -35,15 +35,18 @@ ESP32-C3 IR Blaster firmware and web UI:
 Full install sequence (firmware + frontend):
 
 ```bash
-pio run --target upload
-pio run --target buildfs
-pio run --target uploadfs
+make build
 ```
 
 When to run what:
-- Firmware-only changes: `pio run --target upload`
-- Frontend (`data/`) changes: run `buildfs` + `uploadfs`
-- First-time setup: run all three commands above
+- Firmware-only changes: `make upload`
+- Frontend (`data/`) changes: `make fs`
+- First-time setup: `make build`
+
+Equivalent PlatformIO: `pio run --target upload`, then `buildfs`, then `uploadfs`.
+
+Transmit-only (no IR receiver): set `IR_RECV_ENABLED=0` in `.env` before building (`scripts/pio_env_flags.py` passes `-DIR_RECV_ENABLED=…`).
+Default IR burst count: `IR_SEND_REPEAT` in `.env` (1–20; default 1).
 
 ## Testing
 

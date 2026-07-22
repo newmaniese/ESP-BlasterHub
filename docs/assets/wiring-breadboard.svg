@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 345" width="440" height="345">
-<title>ESP32-C3 IR Blaster - Layout Tweaks</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 360" width="440" height="360">
+<title>ESP32-C3 IR Blaster - Dual Rail Wiring</title>
 <rect width="100%" height="100%" fill="white"/>
 <text x="45" y="284" font-size="9" font-family="sans-serif" fill="#999" text-anchor="end">1</text>
 <text x="240" y="284" font-size="9" font-family="sans-serif" fill="#999" text-anchor="start">1</text>
@@ -257,13 +257,19 @@
 <line x1="75" y1="40" x2="30" y2="50" stroke="#444" stroke-width="1.5"/>
 <line x1="90" y1="85" x2="30" y2="50" stroke="#444" stroke-width="1.5"/>
 <circle cx="30" cy="50" r="9" fill="#b0e0e6" stroke="#666"/>
-<text x="15" y="70" font-size="9" fill="#333" font-weight="bold">IR LED</text>
-<line x1="195" y1="100" x2="90" y2="40" stroke="#999" stroke-width="2"/>
-<rect x="130.5" y="65.0" width="24" height="10" fill="#e0c090" stroke="#333"/>
-<rect x="134.5" y="65.0" width="3" height="10" fill="brown"/>
-<rect x="139.5" y="65.0" width="3" height="10" fill="black"/>
-<rect x="144.5" y="65.0" width="3" height="10" fill="red"/>
-<circle cx="195" cy="100" r="3" fill="#888"/>
+<text x="8" y="38" font-size="9" fill="#333" font-weight="bold">IR LED</text>
+<!-- 5V rail into Row 15 Left, then 100Ω to LED anode (Row 17) -->
+<path d="M 10,70 L 60,70" stroke="#ef6c00" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.9"/>
+<circle cx="60" cy="70" r="4" fill="#ef6c00"/>
+<text x="8" y="64" font-size="9" fill="#ef6c00" font-weight="bold">5V</text>
+<text x="8" y="88" font-size="8" fill="#666">IR only</text>
+<line x1="60" y1="70" x2="90" y2="40" stroke="#999" stroke-width="2"/>
+<rect x="62" y="48" width="24" height="10" fill="#e0c090" stroke="#333" transform="rotate(-40 74 53)"/>
+<rect x="66" y="48" width="3" height="10" fill="brown" transform="rotate(-40 74 53)"/>
+<rect x="71" y="48" width="3" height="10" fill="black" transform="rotate(-40 74 53)"/>
+<rect x="76" y="48" width="3" height="10" fill="brown" transform="rotate(-40 74 53)"/>
 <circle cx="90" cy="40" r="3" fill="#888"/>
-<text x="220" y="380" text-anchor="middle" font-size="10" fill="#666">Layout: LED Left. Transistor White/Below. KY Labels Spaced.</text>
+<text x="250" y="100" font-size="9" fill="#d32f2f" font-weight="bold">3.3V</text>
+<text x="250" y="112" font-size="8" fill="#666">ESP + RX</text>
+<text x="220" y="340" text-anchor="middle" font-size="10" fill="#666">Dual rail: 3.3V ESP+RX · 5V IR LED · shared GND</text>
 </svg>

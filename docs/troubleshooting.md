@@ -51,5 +51,8 @@ For full logging behavior and examples, see [serial-monitor.md](serial-monitor.m
   - GPIO 10 for IR receive
   - GPIO 4 for IR send
 - Confirm receiver and LED power/ground paths are correct.
+  - Receiver on **3.3 V**; IR LED anode on **5 V** via the series resistor.
+  - **Shared GND** between both rails and the ESP.
+  - Transmit-only board: set `IR_RECV_ENABLED=0` in `.env` and rebuild so GPIO 10 is not polled.
 - Confirm transistor and resistor placement for the IR LED driver.
 - If you changed hardware pins, ensure firmware pin definitions match your wiring.

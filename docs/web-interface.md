@@ -151,7 +151,7 @@ All endpoints remain valid. WebSocket is optional; the UI uses it for live updat
 | `GET` | `/app.js` | JavaScript (static, from LittleFS). |
 | `GET` | `/ip` | Plain text device IP. |
 | `GET` | `/last` | JSON: `{ "seq", "human", "raw", "replayUrl" }` (fallback for scripts; live updates use WebSocket). |
-| `GET` | `/send?type=nec&data=HEX&length=32&repeat=1` | Send NEC code (hex data, bit length, optional repeat). |
+| `GET` | `/send?type=nec&data=HEX&length=32&repeat=1` | Send NEC code (hex data, bit length, optional repeat; default from `IR_SEND_REPEAT` in `.env`). |
 | `GET` | `/save?name=...` | Save the **last received** code with optional name. |
 | `GET` | `/save?protocol=...&value=HEX&length=...&name=...` | Save a specific code by parameters. |
 | `POST` | `/save` | Save from JSON body: `{ "name", "protocol", "value", "bits" }`. |

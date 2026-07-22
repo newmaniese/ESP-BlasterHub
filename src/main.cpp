@@ -7,7 +7,6 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <IRremoteESP8266.h>
-#include <IRrecv.h>
 #include <IRsend.h>
 #include <IRutils.h>
 #include "freertos/FreeRTOS.h"
@@ -18,6 +17,18 @@
 #include "IrSender.h"
 #include "ble_server.h"
 
+// Overridden by -DIR_RECV_ENABLED / -DIR_SEND_REPEAT from .env via scripts/pio_env_flags.py
+#ifndef IR_RECV_ENABLED
+#define IR_RECV_ENABLED 1
+#endif
+#ifndef IR_SEND_REPEAT
+#define IR_SEND_REPEAT 1
+#endif
+
+#if IR_RECV_ENABLED
+#include <IRrecv.h>
+#endif
+
 #define HISTORY_SIZE 5
 #define SAVED_CODES_NAMESPACE "ir_saved"
 #define SAVED_CODE_MAX 500   // NVS value limit ~508; keep JSON under this
@@ -26,17 +37,21 @@
 #define MAX_PARAM_DATA 128
 #define MAX_PARAM_NAME 64
 
+#if IR_RECV_ENABLED
 const uint16_t RECV_PIN = 10;     // IR receiver on GPIO10 (ESP32-C3)
+#endif
 const uint16_t SEND_PIN = 4;      // IR LED on GPIO4
 
+#if IR_RECV_ENABLED
 // IRremote settings
 const uint16_t CAPTURE_BUF_SIZE = 1024;
 const uint8_t RECV_TIMEOUT_MS = 50;    // 50ms, good for most remotes
 
 IRrecv irrecv(RECV_PIN, CAPTURE_BUF_SIZE, RECV_TIMEOUT_MS, true);
+decode_results results;
+#endif
 IRsend irsend(SEND_PIN);
 IrSender irSender(irsend);
-decode_results results;
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -270,8 +285,9 @@ bool sendSavedCode(int index, String &outName) {
   if (String(protocol).equalsIgnoreCase("NEC") && strlen(valueHex) > 0) {
     uint32_t value;
     if (parseHex32(valueHex, value)) {
-      irSender.queue(value, bits, 1);
-      printf("[IR] TX NEC 0x%s %db (%s)\n", valueHex, bits, outName.length() ? outName.c_str() : "no name");
+      irSender.queue(value, bits, IR_SEND_REPEAT);
+      printf("[IR] TX NEC 0x%s %db x%d (%s)\n", valueHex, bits, IR_SEND_REPEAT,
+             outName.length() ? outName.c_str() : "no name");
       return true;
     } else {
       printf("[IR] Invalid or out-of-range hex value for saved code #%d: %s\n", index, valueHex);
@@ -696,7 +712,7 @@ void handleSend(AsyncWebServerRequest *request) {
   }
 
   int length = request->hasParam("length") ? request->getParam("length")->value().toInt() : 32;
-  int repeat = request->hasParam("repeat") ? request->getParam("repeat")->value().toInt() : 1;
+  int repeat = request->hasParam("repeat") ? request->getParam("repeat")->value().toInt() : IR_SEND_REPEAT;
 
   if (length < 1 || length > 128) {
     request->send(400, "text/plain", "Invalid length (1-128)");
@@ -714,7 +730,7 @@ void handleSend(AsyncWebServerRequest *request) {
       return;
     }
     irSender.queue(value, length, repeat);
-    printf("[IR] TX NEC 0x%s %db (no name)\n", data.c_str(), length);
+    printf("[IR] TX NEC 0x%s %db x%d (no name)\n", data.c_str(), length, repeat);
     request->send(200, "text/plain", "Sent NEC " + data);
   } else {
     request->send(400, "text/plain", "Unsupported type");
@@ -732,6 +748,7 @@ void handleWsData(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t
   String stype = req["type"] | "";
   String sdata = req["data"] | "";
   int length = req["length"] | 32;
+  int repeat = req["repeat"] | IR_SEND_REPEAT;
   String name = req["name"] | "";
 
   if (stype.length() > MAX_PARAM_PROTOCOL || sdata.length() > MAX_PARAM_DATA || name.length() > MAX_PARAM_NAME) {
@@ -744,11 +761,22 @@ void handleWsData(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t
     return;
   }
 
+  if (repeat < 1 || repeat > 20) {
+    JsonDocument ack;
+    ack["ok"] = false;
+    ack["error"] = "Invalid repeat (1-20)";
+    String ackStr;
+    serializeJson(ack, ackStr);
+    client->text(ackStr);
+    return;
+  }
+
   if (stype == "nec") {
     uint32_t value;
     if (sdata.length() > 0 && length > 0 && length <= 128 && parseHex32(sdata.c_str(), value)) {
-      irSender.queue(value, length, 1);
-      printf("[IR] TX NEC 0x%s %db (%s)\n", sdata.c_str(), length, name.length() ? name.c_str() : "no name");
+      irSender.queue(value, length, repeat);
+      printf("[IR] TX NEC 0x%s %db x%d (%s)\n", sdata.c_str(), length, repeat,
+             name.length() ? name.c_str() : "no name");
       JsonDocument ack;
       ack["ok"] = true;
       ack["msg"] = "Sent NEC " + sdata;
@@ -828,7 +856,13 @@ void setup() {
     printf("[IR] LittleFS mounted\n");
   }
 
+#if IR_RECV_ENABLED
   irrecv.enableIRIn();
+  printf("[IR] IR receive enabled (GPIO %u)\n", RECV_PIN);
+#else
+  printf("[IR] IR receive disabled (IR_RECV_ENABLED=0)\n");
+#endif
+  printf("[IR] IR send repeat default: %d\n", IR_SEND_REPEAT);
   irsend.begin();
 
   server.on("/", HTTP_GET, handleRoot);
@@ -882,7 +916,7 @@ void handleHeartbeat() {
 }
 
 void handleIRReceive() {
-  // IR receive loop
+#if IR_RECV_ENABLED
   if (irrecv.decode(&results)) {
     lastHumanReadable = resultToHumanReadableBasic(&results);
     lastRawJson = resultToSourceCode(&results);
@@ -916,6 +950,7 @@ void handleIRReceive() {
 
     irrecv.resume();
   }
+#endif
 }
 
 void loop() {
