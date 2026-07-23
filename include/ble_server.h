@@ -12,10 +12,10 @@
 
 #define BLE_DEVICE_NAME          "IR Blaster"
 
-// Pairing: "Just Works" (no passkey) by default.
-// To require a passkey, #define BLE_USE_PASSKEY 1 in src/secrets.h.
+// Pairing: Passkey required by default.
+// To use "Just Works" (no passkey), #define BLE_USE_PASSKEY 0 in src/secrets.h.
 #ifndef BLE_USE_PASSKEY
-#define BLE_USE_PASSKEY           0
+#define BLE_USE_PASSKEY           1
 #endif
 
 #define BLE_SCHEDULE_CMD_NAME_MAX 32   // max length of scheduled command name
