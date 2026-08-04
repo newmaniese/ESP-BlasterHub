@@ -68,6 +68,9 @@ Preferences savedCodes;
 struct SavedCodeCacheEntry {
   String raw;
   String name;
+  String protocol;
+  String value;
+  uint16_t bits;
 };
 static std::vector<SavedCodeCacheEntry> g_savedCodesCache;
 static bool g_cacheLoaded = false;
@@ -120,7 +123,10 @@ static void ensureCacheLoaded() {
     JsonDocument entry;
     deserializeJson(entry, raw);
     String name = entry["name"] | "";
-    g_savedCodesCache.push_back({raw, name});
+    String protocol = entry["protocol"] | "UNKNOWN";
+    String value = entry["value"] | "0";
+    uint16_t bits = entry["bits"] | 32;
+    g_savedCodesCache.push_back({raw, name, protocol, value, bits});
   }
   savedCodes.end();
   g_cacheLoaded = true;
@@ -380,7 +386,11 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
-  g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
+  String cachedName = doc["name"] | "";
+  String cachedProtocol = doc["protocol"] | "UNKNOWN";
+  String cachedValue = doc["value"] | "0";
+  uint16_t cachedBits = doc["bits"] | 32;
+  g_savedCodesCache.push_back({String(buf), cachedName, cachedProtocol, cachedValue, cachedBits});
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -465,7 +475,11 @@ static bool saveImportedCodes(JsonArray in, JsonDocument &outDoc) {
 
     String key = String(n);
     savedCodes.putString(key.c_str(), buf);
-    g_savedCodesCache.push_back({String(buf), String(entry["name"] | "")});
+    String cachedName = entry["name"] | "";
+    String cachedProtocol = entry["protocol"] | "UNKNOWN";
+    String cachedValue = entry["value"] | "0";
+    uint16_t cachedBits = entry["bits"] | 32;
+    g_savedCodesCache.push_back({String(buf), cachedName, cachedProtocol, cachedValue, cachedBits});
     n++;
     outDoc["imported"] = (int)outDoc["imported"] + 1;
   }
@@ -560,7 +574,11 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   savedCodes.putString(key.c_str(), buf);
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
-  g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
+  String cachedName = doc["name"] | "";
+  String cachedProtocol = doc["protocol"] | "UNKNOWN";
+  String cachedValue = doc["value"] | "0";
+  uint16_t cachedBits = doc["bits"] | 32;
+  g_savedCodesCache.push_back({String(buf), cachedName, cachedProtocol, cachedValue, cachedBits});
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -647,7 +665,11 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   serializeJson(entry, buf, sizeof(buf));
   savedCodes.putString(key.c_str(), buf);
   savedCodes.end();
-  g_savedCodesCache[index] = {String(buf), String(entry["name"] | "")};
+  String cachedName = entry["name"] | "";
+  String cachedProtocol = entry["protocol"] | "UNKNOWN";
+  String cachedValue = entry["value"] | "0";
+  uint16_t cachedBits = entry["bits"] | 32;
+  g_savedCodesCache[index] = {String(buf), cachedName, cachedProtocol, cachedValue, cachedBits};
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
 }
 
@@ -662,18 +684,26 @@ void handleDump(AsyncWebServerRequest *request) {
   int n = (int)g_savedCodesCache.size();
   String out = "// Saved IR codes — paste into firmware\n";
   out += "// Count: " + String(n) + "\n\n";
+
+  // Pre-allocate buffer assuming ~100 bytes per saved code on average
+  out.reserve(out.length() + n * 100);
+
+  char fragBuf[256];
   for (int i = 0; i < n; i++) {
-    JsonDocument entry;
-    deserializeJson(entry, g_savedCodesCache[i].raw);
-    const char *name = entry["name"] | "";
-    String protocol = entry["protocol"] | "UNKNOWN";
-    const char *valueHex = entry["value"] | "0";
-    uint16_t bits = entry["bits"] | 32;
-    out += "// " + String(i) + " " + String(name) + " " + protocol + " 0x" + String(valueHex) + " " + String(bits) + "b\n";
-    if (protocol.equalsIgnoreCase("NEC"))
-      out += "irsend.sendNEC(0x" + String(valueHex) + "u, " + String(bits) + ");  // " + String(name) + "\n";
-    else
-      out += "// irsend.send... (unsupported protocol); value=0x" + String(valueHex) + " " + String(name) + "\n";
+    const char *name = g_savedCodesCache[i].name.c_str();
+    const char *protocol = g_savedCodesCache[i].protocol.c_str();
+    const char *valueHex = g_savedCodesCache[i].value.c_str();
+    uint16_t bits = g_savedCodesCache[i].bits;
+
+    int len = snprintf(fragBuf, sizeof(fragBuf), "// %d %s %s 0x%s %ub\n", i, name, protocol, valueHex, bits);
+    if (len > 0) out.concat(fragBuf, std::min(len, (int)sizeof(fragBuf) - 1));
+
+    if (strcasecmp(protocol, "NEC") == 0) {
+      len = snprintf(fragBuf, sizeof(fragBuf), "irsend.sendNEC(0x%su, %u);  // %s\n", valueHex, bits, name);
+    } else {
+      len = snprintf(fragBuf, sizeof(fragBuf), "// irsend.send... (unsupported protocol); value=0x%s %s\n", valueHex, name);
+    }
+    if (len > 0) out.concat(fragBuf, std::min(len, (int)sizeof(fragBuf) - 1));
   }
   request->send(200, "text/plain", out);
 }
