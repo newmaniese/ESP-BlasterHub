@@ -21,6 +21,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "ble_server.h"
+#include "ble_schedule.h"
 
 #if BLE_USE_PASSKEY && !defined(BLE_PASSKEY)
 #error "BLE_PASSKEY must be defined (e.g. in secrets.h) when BLE_USE_PASSKEY is enabled"
@@ -378,29 +379,21 @@ bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_nam
   bool armed = false;
   uint32_t delayMs = 0;
   unsigned long heartbeatMs = 0;
-  char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX];
+  char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX] = "";
+
   {
     ScheduleStateLock lock;
     if (!lock) return false;
     armed = scheduledArmed;
     delayMs = scheduledDelayMs;
     heartbeatMs = lastHeartbeatMs;
-    strncpy(commandCopy, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
-    commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+    if (armed) {
+      strncpy(commandCopy, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+      commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+    }
   }
 
-  if (!armed || commandCopy[0] == '\0') {
-    return false;
-  }
-
-  unsigned long elapsed = millis() - heartbeatMs;
-  if (elapsed >= delayMs) {
-    return false;  // already expired, about to fire
-  }
-  *out_seconds_remaining = (delayMs - (uint32_t)elapsed + 999) / 1000;
-  strncpy(out_command_name, commandCopy, name_max - 1);
-  out_command_name[name_max - 1] = '\0';
-  return true;
+  return calculateScheduleCountdown(armed, delayMs, heartbeatMs, commandCopy, millis(), out_seconds_remaining, out_command_name, name_max);
 }
 
 void loopBLE() {

@@ -4,6 +4,7 @@
 #include "IRsend.h"
 #include "hex_utils.h"
 #include <stddef.h> // for NULL
+#include "ble_schedule.h"
 
 unsigned long mock_millis = 0;
 
@@ -123,6 +124,118 @@ void test_IrSender_interruption(void) {
 void setUp(void) { mock_millis = 0; }
 void tearDown(void) {}
 
+void test_calculateScheduleCountdown_happy_path(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[32] = "";
+
+  bool result = calculateScheduleCountdown(
+    true, 5000, 1000, "TurnOnTV", 2000,
+    &seconds_remaining, command_name, sizeof(command_name)
+  );
+
+  TEST_ASSERT_TRUE(result);
+  TEST_ASSERT_EQUAL_UINT32(4, seconds_remaining); // 5000 - (2000 - 1000) = 4000ms -> 4s
+  TEST_ASSERT_EQUAL_STRING("TurnOnTV", command_name);
+}
+
+void test_calculateScheduleCountdown_rounding(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[32] = "";
+
+  bool result = calculateScheduleCountdown(
+    true, 5000, 1000, "VolUp", 2500, // elapsed = 1500, remaining = 3500ms
+    &seconds_remaining, command_name, sizeof(command_name)
+  );
+
+  TEST_ASSERT_TRUE(result);
+  TEST_ASSERT_EQUAL_UINT32(4, seconds_remaining); // (3500 + 999) / 1000 = 4s
+  TEST_ASSERT_EQUAL_STRING("VolUp", command_name);
+}
+
+void test_calculateScheduleCountdown_unarmed(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[32] = "";
+
+  bool result = calculateScheduleCountdown(
+    false, 5000, 1000, "TurnOnTV", 2000,
+    &seconds_remaining, command_name, sizeof(command_name)
+  );
+
+  TEST_ASSERT_FALSE(result);
+}
+
+void test_calculateScheduleCountdown_empty_command(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[32] = "";
+
+  bool result = calculateScheduleCountdown(
+    true, 5000, 1000, "", 2000,
+    &seconds_remaining, command_name, sizeof(command_name)
+  );
+
+  TEST_ASSERT_FALSE(result);
+}
+
+void test_calculateScheduleCountdown_null_pointers(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[32] = "";
+
+  // Null seconds_remaining
+  TEST_ASSERT_FALSE(calculateScheduleCountdown(
+    true, 5000, 1000, "Cmd", 2000,
+    NULL, command_name, sizeof(command_name)
+  ));
+
+  // Null command_name out buffer
+  TEST_ASSERT_FALSE(calculateScheduleCountdown(
+    true, 5000, 1000, "Cmd", 2000,
+    &seconds_remaining, NULL, sizeof(command_name)
+  ));
+
+  // Null commandName input
+  TEST_ASSERT_FALSE(calculateScheduleCountdown(
+    true, 5000, 1000, NULL, 2000,
+    &seconds_remaining, command_name, sizeof(command_name)
+  ));
+}
+
+void test_calculateScheduleCountdown_zero_max_name(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[32] = "";
+
+  bool result = calculateScheduleCountdown(
+    true, 5000, 1000, "Cmd", 2000,
+    &seconds_remaining, command_name, 0
+  );
+
+  TEST_ASSERT_FALSE(result);
+}
+
+void test_calculateScheduleCountdown_expired(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[32] = "";
+
+  bool result = calculateScheduleCountdown(
+    true, 5000, 1000, "Cmd", 6000, // elapsed = 5000 >= delayMs
+    &seconds_remaining, command_name, sizeof(command_name)
+  );
+
+  TEST_ASSERT_FALSE(result);
+}
+
+void test_calculateScheduleCountdown_truncation(void) {
+  uint32_t seconds_remaining = 0;
+  char command_name[5] = ""; // Very small buffer
+
+  bool result = calculateScheduleCountdown(
+    true, 5000, 1000, "LongCommand", 2000,
+    &seconds_remaining, command_name, sizeof(command_name)
+  );
+
+  TEST_ASSERT_TRUE(result);
+  TEST_ASSERT_EQUAL_STRING("Long", command_name); // Buffer size 5 means 4 chars + null terminator
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_isHexValue_valid);
@@ -135,5 +248,15 @@ int main(void) {
   RUN_TEST(test_uint64ToHex);
   RUN_TEST(test_IrSender_isActive_basic);
   RUN_TEST(test_IrSender_interruption);
+
+  RUN_TEST(test_calculateScheduleCountdown_happy_path);
+  RUN_TEST(test_calculateScheduleCountdown_rounding);
+  RUN_TEST(test_calculateScheduleCountdown_unarmed);
+  RUN_TEST(test_calculateScheduleCountdown_empty_command);
+  RUN_TEST(test_calculateScheduleCountdown_null_pointers);
+  RUN_TEST(test_calculateScheduleCountdown_zero_max_name);
+  RUN_TEST(test_calculateScheduleCountdown_expired);
+  RUN_TEST(test_calculateScheduleCountdown_truncation);
+
   return UNITY_END();
 }
