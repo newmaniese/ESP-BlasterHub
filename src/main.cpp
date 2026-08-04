@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <strings.h>
 #include <ctype.h>
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -661,19 +662,26 @@ void handleDump(AsyncWebServerRequest *request) {
   ensureCacheLoaded();
   int n = (int)g_savedCodesCache.size();
   String out = "// Saved IR codes — paste into firmware\n";
-  out += "// Count: " + String(n) + "\n\n";
+  char buf[256];
+  snprintf(buf, sizeof(buf), "// Count: %d\n\n", n);
+  out += buf;
   for (int i = 0; i < n; i++) {
     JsonDocument entry;
     deserializeJson(entry, g_savedCodesCache[i].raw);
     const char *name = entry["name"] | "";
-    String protocol = entry["protocol"] | "UNKNOWN";
+    const char *protocol = entry["protocol"] | "UNKNOWN";
     const char *valueHex = entry["value"] | "0";
     uint16_t bits = entry["bits"] | 32;
-    out += "// " + String(i) + " " + String(name) + " " + protocol + " 0x" + String(valueHex) + " " + String(bits) + "b\n";
-    if (protocol.equalsIgnoreCase("NEC"))
-      out += "irsend.sendNEC(0x" + String(valueHex) + "u, " + String(bits) + ");  // " + String(name) + "\n";
-    else
-      out += "// irsend.send... (unsupported protocol); value=0x" + String(valueHex) + " " + String(name) + "\n";
+
+    snprintf(buf, sizeof(buf), "// %d %s %s 0x%s %ub\n", i, name, protocol, valueHex, bits);
+    out += buf;
+
+    if (strcasecmp(protocol, "NEC") == 0) {
+      snprintf(buf, sizeof(buf), "irsend.sendNEC(0x%su, %u);  // %s\n", valueHex, bits, name);
+    } else {
+      snprintf(buf, sizeof(buf), "// irsend.send... (unsupported protocol); value=0x%s %s\n", valueHex, name);
+    }
+    out += buf;
   }
   request->send(200, "text/plain", out);
 }
