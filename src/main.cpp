@@ -72,6 +72,12 @@ struct SavedCodeCacheEntry {
 static std::vector<SavedCodeCacheEntry> g_savedCodesCache;
 static bool g_cacheLoaded = false;
 
+static String g_cachedSavedCodesJson = "";
+static bool g_savedCodesJsonDirty = true;
+static void invalidateJsonCache() {
+  g_savedCodesJsonDirty = true;
+}
+
 // BLE callbacks and AsyncWebServer handlers run on different tasks, so NVS access
 // through this shared Preferences instance must be serialized.
 static SemaphoreHandle_t savedCodesMutex = nullptr;
@@ -124,6 +130,7 @@ static void ensureCacheLoaded() {
   }
   savedCodes.end();
   g_cacheLoaded = true;
+  invalidateJsonCache();
 }
 
 int getSavedCount() {
@@ -138,6 +145,11 @@ String getSavedCodesJson() {
   SavedCodesLock lock;
   if (!lock) return "[]";
   ensureCacheLoaded();
+
+  if (!g_savedCodesJsonDirty && g_cachedSavedCodesJson.length() > 0) {
+    return g_cachedSavedCodesJson;
+  }
+
   int n = (int)g_savedCodesCache.size();
   JsonDocument doc;
   JsonArray arr = doc.to<JsonArray>();
@@ -153,6 +165,10 @@ String getSavedCodesJson() {
   }
   String out;
   serializeJson(doc, out);
+
+  g_cachedSavedCodesJson = out;
+  g_savedCodesJsonDirty = false;
+
   return out;
 }
 
@@ -381,6 +397,7 @@ void onSaveBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
   g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
+  invalidateJsonCache();
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -472,6 +489,7 @@ static bool saveImportedCodes(JsonArray in, JsonDocument &outDoc) {
 
   savedCodes.putInt("n", n);
   savedCodes.end();
+  invalidateJsonCache();
   outDoc["total"] = n;
   return true;
 }
@@ -561,6 +579,7 @@ void handleSaveGet(AsyncWebServerRequest *request) {
   savedCodes.putInt("n", n + 1);
   savedCodes.end();
   g_savedCodesCache.push_back({String(buf), String(doc["name"] | "")});
+  invalidateJsonCache();
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(n) + ",\"total\":" + String(n + 1) + "}");
 }
 
@@ -598,6 +617,7 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
   savedCodes.putInt("n", n - 1);
   savedCodes.end();
   g_savedCodesCache.erase(g_savedCodesCache.begin() + index);
+  invalidateJsonCache();
   request->send(200, "application/json", "{\"ok\":true,\"remaining\":" + String(n - 1) + "}");
 }
 
@@ -648,6 +668,7 @@ void handleSavedRename(AsyncWebServerRequest *request) {
   savedCodes.putString(key.c_str(), buf);
   savedCodes.end();
   g_savedCodesCache[index] = {String(buf), String(entry["name"] | "")};
+  invalidateJsonCache();
   request->send(200, "application/json", "{\"ok\":true,\"index\":" + String(index) + "}");
 }
 
