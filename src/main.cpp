@@ -18,6 +18,20 @@
 #include "IrSender.h"
 #include "ble_server.h"
 
+// Helper to robustly parse String to int
+static bool parseIntStr(const String& str, int& out_val) {
+  if (str.length() == 0) return false;
+  char* endptr = nullptr;
+  long val = strtol(str.c_str(), &endptr, 10);
+  if (endptr == str.c_str()) return false; // No conversion performed
+  while (*endptr != '\0') {
+    if (!isspace((unsigned char)*endptr)) return false; // Invalid char found
+    endptr++;
+  }
+  out_val = (int)val;
+  return true;
+}
+
 // Overridden by -DIR_RECV_ENABLED / -DIR_SEND_REPEAT from .env via scripts/pio_env_flags.py
 #ifndef IR_RECV_ENABLED
 #define IR_RECV_ENABLED 1
@@ -522,7 +536,14 @@ void handleSaveGet(AsyncWebServerRequest *request) {
       return;
     }
 
-    if (request->hasParam("length")) bits = (uint16_t)request->getParam("length")->value().toInt();
+    if (request->hasParam("length")) {
+      int parsedBits = 32;
+      if (!parseIntStr(request->getParam("length")->value(), parsedBits)) {
+        request->send(400, "text/plain", "Invalid length format");
+        return;
+      }
+      bits = (uint16_t)parsedBits;
+    }
   } else {
     if (historyLen == 0) {
       request->send(400, "text/plain", "No code to save; receive an IR code first.");
@@ -577,7 +598,11 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     request->send(400, "application/json", "{\"error\":\"Missing index\"}");
     return;
   }
-  int index = request->getParam("index")->value().toInt();
+  int index;
+  if (!parseIntStr(request->getParam("index")->value(), index)) {
+    request->send(400, "application/json", "{\"error\":\"Invalid index format\"}");
+    return;
+  }
   SavedCodesLock lock;
   if (!lock) {
     request->send(500, "application/json", "{\"error\":\"Storage unavailable\"}");
@@ -608,7 +633,11 @@ void handleSavedRename(AsyncWebServerRequest *request) {
     request->send(400, "application/json", "{\"error\":\"Missing index or name\"}");
     return;
   }
-  int index = request->getParam("index")->value().toInt();
+  int index;
+  if (!parseIntStr(request->getParam("index")->value(), index)) {
+    request->send(400, "application/json", "{\"error\":\"Invalid index format\"}");
+    return;
+  }
   String newName = request->getParam("name")->value();
 
   if (newName.length() > MAX_PARAM_NAME) {
@@ -719,8 +748,21 @@ void handleSend(AsyncWebServerRequest *request) {
     return;
   }
 
-  int length = request->hasParam("length") ? request->getParam("length")->value().toInt() : 32;
-  int repeat = request->hasParam("repeat") ? request->getParam("repeat")->value().toInt() : IR_SEND_REPEAT;
+  int length = 32;
+  if (request->hasParam("length")) {
+    if (!parseIntStr(request->getParam("length")->value(), length)) {
+      request->send(400, "text/plain", "Invalid length format");
+      return;
+    }
+  }
+
+  int repeat = IR_SEND_REPEAT;
+  if (request->hasParam("repeat")) {
+    if (!parseIntStr(request->getParam("repeat")->value(), repeat)) {
+      request->send(400, "text/plain", "Invalid repeat format");
+      return;
+    }
+  }
 
   if (length < 1 || length > 128) {
     request->send(400, "text/plain", "Invalid length (1-128)");
