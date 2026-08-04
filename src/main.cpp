@@ -161,6 +161,58 @@ String getSavedCodesJson() {
 static const size_t BLE_SAVED_CODES_MAX_LEN = 590;
 // Reserve for truncation sentinel: ,{"i":-1,"n":"","_truncated":true,"_total":NNN} + ']'
 static const size_t BLE_SAVED_TRUNCATED_SUFFIX_LEN = 50;
+
+// Helper function to format a compact JSON entry into a buffer
+static int formatCompactJsonEntry(char* fragBuf, size_t bufSize, int index, const char* name, bool addComma) {
+  int len = 0;
+  if (addComma) {
+    fragBuf[len++] = ',';
+  }
+
+  len += snprintf(fragBuf + len, bufSize - len, "{\"i\":%d,\"n\":\"", index);
+
+  const char *p = name;
+  // Keep 10 bytes margin in buffer for escapes and ending characters
+  while (*p && len < (int)bufSize - 10) {
+    const char *start = p;
+    // Skip characters that don't need escaping
+    while (*p && *p != '"' && *p != '\\' && (unsigned char)*p >= 0x20) {
+      p++;
+    }
+
+    int chunk = p - start;
+    if (chunk > 0) {
+      if (len + chunk >= (int)bufSize - 10) {
+        // Truncate to available space to prevent buffer overflow,
+        // though this shouldn't happen with valid JSON names < 64 chars
+        chunk = (bufSize - 10) - len;
+      }
+      memcpy(fragBuf + len, start, chunk);
+      len += chunk;
+    }
+
+    if (*p && len < (int)bufSize - 10) {
+      unsigned char c = (unsigned char)*p;
+      if (c == '"') { fragBuf[len++]='\\'; fragBuf[len++]='"'; }
+      else if (c == '\\') { fragBuf[len++]='\\'; fragBuf[len++]='\\'; }
+      else if (c == '\b') { fragBuf[len++]='\\'; fragBuf[len++]='b'; }
+      else if (c == '\t') { fragBuf[len++]='\\'; fragBuf[len++]='t'; }
+      else if (c == '\n') { fragBuf[len++]='\\'; fragBuf[len++]='n'; }
+      else if (c == '\f') { fragBuf[len++]='\\'; fragBuf[len++]='f'; }
+      else if (c == '\r') { fragBuf[len++]='\\'; fragBuf[len++]='r'; }
+      else {
+        len += snprintf(fragBuf + len, bufSize - len, "\\u%04x", c);
+      }
+      p++;
+    }
+  }
+  fragBuf[len++] = '"';
+  fragBuf[len++] = '}';
+  fragBuf[len] = '\0';
+
+  return len;
+}
+
 String getSavedCodesJsonCompact() {
   SavedCodesLock lock;
   if (!lock) return "[]";
@@ -178,51 +230,7 @@ String getSavedCodesJsonCompact() {
     // Avoid full JSON deserialization by using the pre-parsed cached name
     const char *name = g_savedCodesCache[i].name.c_str();
 
-    int len = 0;
-    if (out.length() > 1) {
-      fragBuf[len++] = ',';
-    }
-
-    len += snprintf(fragBuf + len, sizeof(fragBuf) - len, "{\"i\":%d,\"n\":\"", i);
-
-    const char *p = name;
-    // Keep 10 bytes margin in buffer for escapes and ending characters
-    while (*p && len < (int)sizeof(fragBuf) - 10) {
-      const char *start = p;
-      // Skip characters that don't need escaping
-      while (*p && *p != '"' && *p != '\\' && (unsigned char)*p >= 0x20) {
-        p++;
-      }
-
-      int chunk = p - start;
-      if (chunk > 0) {
-        if (len + chunk >= (int)sizeof(fragBuf) - 10) {
-          // Truncate to available space to prevent buffer overflow,
-          // though this shouldn't happen with valid JSON names < 64 chars
-          chunk = (sizeof(fragBuf) - 10) - len;
-        }
-        memcpy(fragBuf + len, start, chunk);
-        len += chunk;
-      }
-
-      if (*p && len < (int)sizeof(fragBuf) - 10) {
-        unsigned char c = (unsigned char)*p;
-        if (c == '"') { fragBuf[len++]='\\'; fragBuf[len++]='"'; }
-        else if (c == '\\') { fragBuf[len++]='\\'; fragBuf[len++]='\\'; }
-        else if (c == '\b') { fragBuf[len++]='\\'; fragBuf[len++]='b'; }
-        else if (c == '\t') { fragBuf[len++]='\\'; fragBuf[len++]='t'; }
-        else if (c == '\n') { fragBuf[len++]='\\'; fragBuf[len++]='n'; }
-        else if (c == '\f') { fragBuf[len++]='\\'; fragBuf[len++]='f'; }
-        else if (c == '\r') { fragBuf[len++]='\\'; fragBuf[len++]='r'; }
-        else {
-          len += snprintf(fragBuf + len, sizeof(fragBuf) - len, "\\u%04x", c);
-        }
-        p++;
-      }
-    }
-    fragBuf[len++] = '"';
-    fragBuf[len++] = '}';
-    fragBuf[len] = '\0';
+    int len = formatCompactJsonEntry(fragBuf, sizeof(fragBuf), i, name, out.length() > 1);
 
     if (out.length() + len + BLE_SAVED_TRUNCATED_SUFFIX_LEN > BLE_SAVED_CODES_MAX_LEN)
       break;
