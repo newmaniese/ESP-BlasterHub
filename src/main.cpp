@@ -840,22 +840,19 @@ void setupWifi() {
   printf("\n");
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(200);
-  printf("[IR] --- ESP32-C3 IR Blaster boot ---\n");
+void setupStorage() {
   if (!initSavedCodesMutex()) {
     printf("[IR] WARNING: saved codes mutex unavailable; storage operations may fail\n");
   }
-
-  setupWifi();
 
   if (!LittleFS.begin(true)) {
     printf("[IR] LittleFS mount failed!\n");
   } else {
     printf("[IR] LittleFS mounted\n");
   }
+}
 
+void setupIR() {
 #if IR_RECV_ENABLED
   irrecv.enableIRIn();
   printf("[IR] IR receive enabled (GPIO %u)\n", RECV_PIN);
@@ -864,7 +861,9 @@ void setup() {
 #endif
   printf("[IR] IR send repeat default: %d\n", IR_SEND_REPEAT);
   irsend.begin();
+}
 
+void setupWebserver() {
   server.on("/", HTTP_GET, handleRoot);
   // Serve static assets from LittleFS (app.css, app.js, etc.)
   server.serveStatic("/app.css", LittleFS, "/app.css").setCacheControl("max-age=86400");
@@ -892,7 +891,17 @@ void setup() {
   server.begin();
 
   printf("[IR] HTTP IR server started\n");
+}
 
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+  printf("[IR] --- ESP32-C3 IR Blaster boot ---\n");
+
+  setupStorage();
+  setupWifi();
+  setupIR();
+  setupWebserver();
   setupBLE();
 }
 
