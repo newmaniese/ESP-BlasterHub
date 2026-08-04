@@ -287,24 +287,10 @@ static SendCommandCallbacks sendCommandCb;
 static ScheduleCallbacks    scheduleCb;
 
 // ---------------------------------------------------------------------------
-// Public API
+// Helpers
 // ---------------------------------------------------------------------------
 
-void setupBLE() {
-  printf("[BLE] Initializing BLE...\n");
-  if (!initScheduleStateMutex()) {
-    printf("[BLE] WARNING: schedule mutex unavailable; scheduling operations may fail\n");
-  }
-
-#if BLE_USE_PASSKEY
-  if (BLE_PASSKEY > 999999) {
-    printf("[BLE] WARNING: BLE_PASSKEY %u is greater than 999999; only the last 6 digits will be used.\n", (unsigned)BLE_PASSKEY);
-  }
-#endif
-
-  BLEDevice::init(BLE_DEVICE_NAME);
-  BLEDevice::setMTU(512);
-
+static void setupBLESecurity() {
   // Security: bonding + encryption. Just Works (no passkey) or passkey entry when BLE_USE_PASSKEY.
   BLEDevice::setEncryptionLevel(BLE_USE_PASSKEY ? ESP_BLE_SEC_ENCRYPT_MITM : ESP_BLE_SEC_ENCRYPT);
   BLEDevice::setSecurityCallbacks(&securityCb);
@@ -317,13 +303,9 @@ void setupBLE() {
 #endif
   pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   pSecurity->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+}
 
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(&serverCb);
-
-  // --- Service ---
-  BLEService* pService = pServer->createService(BLE_IR_SERVICE_UUID);
-
+static void setupBLECharacteristics(BLEService* pService) {
   // Characteristic permissions: ENC_MITM when passkey used, ENC only for Just Works (no MITM).
   const uint32_t perm_read  = BLE_USE_PASSKEY ? ESP_GATT_PERM_READ_ENC_MITM  : ESP_GATT_PERM_READ_ENCRYPTED;
   const uint32_t perm_write = BLE_USE_PASSKEY ? ESP_GATT_PERM_WRITE_ENC_MITM : ESP_GATT_PERM_WRITE_ENCRYPTED;
@@ -356,10 +338,9 @@ void setupBLE() {
       BLECharacteristic::PROPERTY_WRITE);
   pScheduleChar->setAccessPermissions(perm_write);
   pScheduleChar->setCallbacks(&scheduleCb);
+}
 
-  pService->start();
-
-  // --- Advertising ---
+static void setupBLEAdvertising() {
   BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(BLE_IR_SERVICE_UUID);
   pAdvertising->setScanResponse(true);
@@ -368,6 +349,40 @@ void setupBLE() {
   BLEDevice::startAdvertising();
 
   printf("[BLE] Advertising started as \"%s\"\n", BLE_DEVICE_NAME);
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+void setupBLE() {
+  printf("[BLE] Initializing BLE...\n");
+  if (!initScheduleStateMutex()) {
+    printf("[BLE] WARNING: schedule mutex unavailable; scheduling operations may fail\n");
+  }
+
+#if BLE_USE_PASSKEY
+  if (BLE_PASSKEY > 999999) {
+    printf("[BLE] WARNING: BLE_PASSKEY %u is greater than 999999; only the last 6 digits will be used.\n", (unsigned)BLE_PASSKEY);
+  }
+#endif
+
+  BLEDevice::init(BLE_DEVICE_NAME);
+  BLEDevice::setMTU(512);
+
+  setupBLESecurity();
+
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(&serverCb);
+
+  // --- Service ---
+  BLEService* pService = pServer->createService(BLE_IR_SERVICE_UUID);
+
+  setupBLECharacteristics(pService);
+
+  pService->start();
+
+  setupBLEAdvertising();
 }
 
 bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_name, size_t name_max) {
