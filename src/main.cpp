@@ -115,8 +115,10 @@ static void ensureCacheLoaded() {
   int n = savedCodes.getInt("n", 0);
   g_savedCodesCache.clear();
   g_savedCodesCache.reserve(n);
+  char keyBuf[16];
   for (int i = 0; i < n; i++) {
-    String raw = savedCodes.getString(String(i).c_str(), "{}");
+    itoa(i, keyBuf, 10);
+    String raw = savedCodes.getString(keyBuf, "{}");
     JsonDocument entry;
     deserializeJson(entry, raw);
     String name = entry["name"] | "";
@@ -590,11 +592,14 @@ void handleSavedDelete(AsyncWebServerRequest *request) {
     request->send(400, "application/json", "{\"error\":\"Invalid index\"}");
     return;
   }
+  char keyBuf[16];
   for (int i = index; i < n - 1; i++) {
     String nextRaw = g_savedCodesCache[i + 1].raw;
-    savedCodes.putString(String(i).c_str(), nextRaw.c_str());
+    itoa(i, keyBuf, 10);
+    savedCodes.putString(keyBuf, nextRaw.c_str());
   }
-  savedCodes.remove(String(n - 1).c_str());
+  itoa(n - 1, keyBuf, 10);
+  savedCodes.remove(keyBuf);
   savedCodes.putInt("n", n - 1);
   savedCodes.end();
   g_savedCodesCache.erase(g_savedCodesCache.begin() + index);
@@ -669,7 +674,11 @@ void handleDump(AsyncWebServerRequest *request) {
     String protocol = entry["protocol"] | "UNKNOWN";
     const char *valueHex = entry["value"] | "0";
     uint16_t bits = entry["bits"] | 32;
-    out += "// " + String(i) + " " + String(name) + " " + protocol + " 0x" + String(valueHex) + " " + String(bits) + "b\n";
+    char idxBuf[16];
+    itoa(i, idxBuf, 10);
+    out += "// ";
+    out += idxBuf;
+    out += " " + String(name) + " " + protocol + " 0x" + String(valueHex) + " " + String(bits) + "b\n";
     if (protocol.equalsIgnoreCase("NEC"))
       out += "irsend.sendNEC(0x" + String(valueHex) + "u, " + String(bits) + ");  // " + String(name) + "\n";
     else
