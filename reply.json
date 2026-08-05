@@ -1,0 +1,6 @@
+[
+    {
+        "comment_id": "5197701684",
+        "reply": "Understood. Acknowledging that this work is now obsolete as `ctype.h` will be needed for `isspace()` in an upcoming PR, and stopping work on this task."
+    }
+]
