@@ -23,7 +23,7 @@ BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue 
 | Saved Codes | `e97a0002-c116-4a63-a60f-0e9b4d3648f3` | Read (encrypted) | JSON array | Full list of stored IR codes, same shape as `GET /saved` |
 | Send Command | `e97a0003-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | 1 byte: NVS index | Write the index of a saved code to transmit it |
 | Status | `e97a0004-c116-4a63-a60f-0e9b4d3648f3` | Read + Notify (encrypted) | UTF-8 string | Result after a send: `OK:<name>` or `ERR:<reason>` |
-| Schedule | `e97a0005-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | JSON (see below) | Arm a delayed command or send a heartbeat to reset the timer |
+| Schedule | `e97a0005-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | JSON (see below) | Configure the command that runs after a BLE disconnect delay |
 
 All characteristics require an **encrypted and authenticated** connection (bonding must be completed before any access).
 
@@ -79,12 +79,11 @@ Subscribe to notifications on this characteristic to receive the result immediat
 
 ### Schedule payload
 
-Write UTF-8 JSON to arm a delayed command or to send a heartbeat:
+Write UTF-8 JSON to configure the disconnect-delayed command:
 
-- **Arm timer:** `{"delay_seconds": 900, "command": "Off"}` — The ESP32 will run the saved code with that **name** (case-insensitive lookup) after `delay_seconds` seconds, unless a heartbeat write resets the timer. Only one scheduled command is active; a new arm replaces the previous one.
-- **Heartbeat:** `{"heartbeat": true}` — Resets the timer so the scheduled command does not fire. Clients (e.g. Blaster Mac Client) send this periodically while connected so that when they disconnect, the ESP32 runs the scheduled command (e.g. "Off") after the delay with no further heartbeats.
+- **Configure:** `{"delay_seconds": 900, "command": "Off"}` — Stores the saved-code **name** (case-insensitive lookup) and delay. The countdown does **not** start while connected. A new configure replaces the previous one and cancels any active countdown.
 
-When the timer expires, the ESP32 looks up the command by name, sends it, and notifies Status (e.g. `OK:scheduled Off`). The schedule is then disarmed.
+When the BLE client disconnects, the ESP32 starts the countdown. If the client reconnects before the delay elapses, the countdown is cancelled. If the delay expires while disconnected, the ESP32 looks up the command by name, sends it, and notifies Status (e.g. `OK:scheduled Off`). The countdown stops (configuration remains until replaced).
 
 ---
 
@@ -140,16 +139,16 @@ This means: if you walk away from the ESP32 with your laptop and come back, the 
 
 ---
 
-## Delayed command and heartbeat (Blaster Mac Client)
+## Delayed command on disconnect (Blaster Mac Client)
 
-The ESP32 does **not** auto-send "On" on connect or "Off" after a fixed disconnect timeout. Instead, a client can:
+The ESP32 does **not** auto-send "On" on connect. Instead, a client can:
 
 1. **On connect:** Send "On" by writing the appropriate saved-code index to Send Command (the client resolves names to indices via the Saved Codes characteristic).
-2. **Arm a delayed command:** Write to Schedule: `{"delay_seconds": 900, "command": "Off"}`. The ESP32 will run that command by name after 900 seconds unless the timer is reset by a heartbeat.
-3. **Send heartbeats:** While connected, the client writes `{"heartbeat": true}` to Schedule periodically (e.g. every 60 seconds). Each write resets the timer.
-4. **On disconnect:** When the client disconnects, heartbeats stop. After `delay_seconds` with no heartbeat, the ESP32 runs the scheduled command (e.g. "Off") once.
+2. **Configure a disconnect command:** Write to Schedule: `{"delay_seconds": 900, "command": "Off"}`. This only stores the command and delay; the countdown does not run while connected.
+3. **On disconnect:** The ESP32 starts the countdown. After `delay_seconds` without a reconnect, it runs the scheduled command (e.g. "Off") once.
+4. **On reconnect:** The countdown is cancelled; the client typically re-configures Schedule.
 
-All command names and delays are configured on the client; the ESP32 only provides a generic "run command by name after T seconds, reset T on heartbeat" mechanism. See [Schedule payload](#schedule-payload) above for the JSON format.
+All command names and delays are configured on the client; the ESP32 provides "run command by name T seconds after disconnect." See [Schedule payload](#schedule-payload) above for the JSON format.
 
 ---
 
@@ -164,7 +163,7 @@ Before building a dedicated app, you can verify BLE operation using the free **n
 5. **Subscribe** to notifications on `e97a0004-…` (Status).
 6. **Write** a single byte (e.g., `0x00`) to `e97a0003-…` (Send Command).
 7. Check that the Status notification shows `OK:<name>` and the IR LED fires.
-8. **Write** to `e97a0005-…` (Schedule) to arm a delayed command (e.g. `{"delay_seconds": 900, "command": "Off"}`) or send a heartbeat (`{"heartbeat": true}`).
+8. **Write** to `e97a0005-…` (Schedule) to configure a disconnect-delayed command (e.g. `{"delay_seconds": 900, "command": "Off"}`).
 
 ---
 
@@ -194,7 +193,7 @@ The device must be powered on, advertising, and already bonded with the Mac runn
 - **Saved Codes** — read returns valid JSON array with expected keys.
 - **Send Command** — write index 0 and verify `OK:` status notification.
 - **Invalid Index** — write index 255 and verify `ERR:` status notification.
-- **Schedule** — write arm (`{"delay_seconds", "command"}`) and heartbeat (`{"heartbeat": true}`); writes succeed.
+- **Schedule** — write configure (`{"delay_seconds", "command"}`); writes succeed.
 - **Status Read** — characteristic is non-empty.
 
 ---
@@ -204,7 +203,7 @@ The device must be powered on, advertising, and already bonded with the Mac runn
 | File | Purpose |
 |------|---------|
 | [`include/ble_server.h`](../include/ble_server.h) | UUIDs, device name, public API (`setupBLE`, `loopBLE`) |
-| [`src/ble_server.cpp`](../src/ble_server.cpp) | Bluedroid GATT server: service, characteristics, security, callbacks, Schedule (delayed command + heartbeat) |
+| [`src/ble_server.cpp`](../src/ble_server.cpp) | Bluedroid GATT server: service, characteristics, security, callbacks, Schedule (disconnect-delayed command) |
 | [`src/main.cpp`](../src/main.cpp) | `sendSavedCode()` and `getSavedCodesJson()` shared helpers; `setupBLE()` called from `setup()` |
 | [`test/integration/test_ble.py`](../test/integration/test_ble.py) | pytest + bleak integration tests |
 

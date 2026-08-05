@@ -25,10 +25,10 @@
 // Call from setup() after IR and NVS are ready.
 void setupBLE();
 
-// Call from loop().  Currently a no-op (BLE is callback-driven).
+// Call from loop(). Runs disconnect-countdown expiry when due.
 void loopBLE();
 
-// If schedule is armed, return true and fill seconds remaining and command name; otherwise return false.
+// If disconnect countdown is active, return true and fill seconds remaining and command name.
 bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_name, size_t name_max);
 
 #endif // BLE_SERVER_H

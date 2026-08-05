@@ -6,7 +6,7 @@
 //   - Saved Codes  (Read)   — JSON array of stored IR commands
 //   - Send Command (Write)  — write a single byte (NVS index) to send that code
 //   - Status       (Notify) — result string after a send ("OK:<name>" or "ERR:…")
-//   - Schedule     (Write)  — JSON: arm delayed command or heartbeat to reset timer
+//   - Schedule     (Write)  — JSON: configure disconnect-delayed command
 //
 // Security: bonding + MITM + Secure Connections, passkey displayed on Serial.
 // Auto-reconnect: advertising restarts on disconnect so the client reconnects.
@@ -46,11 +46,12 @@ static BLECharacteristic* pStatusChar  = nullptr;
 static BLECharacteristic* pScheduleChar = nullptr;
 static bool               deviceConnected = false;
 
-// Delayed command: run a saved code by name after delay_seconds unless heartbeat resets.
+// Disconnect-delayed command: configure while connected; countdown starts on disconnect.
 static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
 static uint32_t scheduledDelayMs   = 0;
-static unsigned long lastHeartbeatMs = 0;
-static bool     scheduledArmed    = false;
+static unsigned long countdownStartMs = 0;
+static bool     scheduleConfigured = false;
+static bool     countdownActive    = false;
 static SemaphoreHandle_t scheduleStateMutex = nullptr;
 
 static bool initScheduleStateMutex() {
@@ -85,6 +86,19 @@ private:
   bool locked;
 };
 
+static void cancelCountdownLocked() {
+  countdownActive = false;
+  countdownStartMs = 0;
+}
+
+static void startCountdownLocked() {
+  if (!scheduleConfigured || scheduledCommandName[0] == '\0') {
+    return;
+  }
+  countdownStartMs = millis();
+  countdownActive = true;
+}
+
 // Helper: set Status characteristic and notify if connected.
 static void setStatus(const String& msg) {
   pStatusChar->setValue(msg.c_str());
@@ -100,12 +114,28 @@ class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     (void)pServer;
     deviceConnected = true;
+    {
+      ScheduleStateLock lock;
+      if (lock) {
+        cancelCountdownLocked();
+      }
+    }
     printf("[BLE] Client connected\n");
   }
 
   void onDisconnect(BLEServer* pServer) override {
     (void)pServer;
     deviceConnected = false;
+    {
+      ScheduleStateLock lock;
+      if (lock) {
+        startCountdownLocked();
+        if (countdownActive) {
+          printf("[BLE] Schedule: countdown started (%u s until %s)\n",
+                 (unsigned)(scheduledDelayMs / 1000UL), scheduledCommandName);
+        }
+      }
+    }
     printf("[BLE] Client disconnected — restarting advertising\n");
     BLEDevice::startAdvertising();
   }
@@ -192,7 +222,8 @@ class SendCommandCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-// Schedule — JSON write: {"delay_seconds": N, "command": "Name"} to arm, or {"heartbeat": true} to reset.
+// Schedule — JSON write: {"delay_seconds": N, "command": "Name"} configures the
+// command that runs Delay seconds after BLE disconnect (countdown starts on disconnect).
 class ScheduleCallbacks : public BLECharacteristicCallbacks {
 public:
   void onWrite(BLECharacteristic* pCharacteristic) override {
@@ -210,11 +241,6 @@ public:
       return;
     }
 
-    if (doc["heartbeat"].is<bool>() && doc["heartbeat"].as<bool>()) {
-      handleHeartbeat();
-      return;
-    }
-
     if (doc["delay_seconds"].is<int>() && doc["command"].is<const char*>()) {
       handleCommand(doc["delay_seconds"].as<int>(), doc["command"].as<const char*>());
       return;
@@ -224,19 +250,6 @@ public:
   }
 
 private:
-  void handleHeartbeat() {
-    unsigned long nowMs = millis();
-    {
-      ScheduleStateLock lock;
-      if (!lock) {
-        setStatus("ERR:schedule lock");
-        return;
-      }
-      lastHeartbeatMs = nowMs;
-    }
-    printf("[BLE] Schedule: heartbeat\n");
-  }
-
   void handleCommand(int sec, const char* cmd) {
     if (sec <= 0 || !cmd || !*cmd) {
       setStatus("ERR:schedule invalid");
@@ -258,7 +271,6 @@ private:
     commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
 
     uint32_t delayMs = (uint32_t)sec * 1000UL;
-    unsigned long nowMs = millis();
 
     {
       ScheduleStateLock lock;
@@ -269,10 +281,10 @@ private:
       strncpy(scheduledCommandName, commandCopy, BLE_SCHEDULE_CMD_NAME_MAX - 1);
       scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
       scheduledDelayMs = delayMs;
-      lastHeartbeatMs = nowMs;
-      scheduledArmed = true;
+      scheduleConfigured = true;
+      cancelCountdownLocked();
     }
-    printf("[BLE] Schedule: armed %s in %u s\n", commandCopy, (unsigned)sec);
+    printf("[BLE] Schedule: configured %s after %u s disconnect\n", commandCopy, (unsigned)sec);
     setStatus("OK:scheduled");
   }
 };
@@ -375,25 +387,25 @@ bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_nam
     return false;
   }
 
-  bool armed = false;
+  bool counting = false;
   uint32_t delayMs = 0;
-  unsigned long heartbeatMs = 0;
+  unsigned long startMs = 0;
   char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX];
   {
     ScheduleStateLock lock;
     if (!lock) return false;
-    armed = scheduledArmed;
+    counting = countdownActive;
     delayMs = scheduledDelayMs;
-    heartbeatMs = lastHeartbeatMs;
+    startMs = countdownStartMs;
     strncpy(commandCopy, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
     commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
   }
 
-  if (!armed || commandCopy[0] == '\0') {
+  if (!counting || commandCopy[0] == '\0') {
     return false;
   }
 
-  unsigned long elapsed = millis() - heartbeatMs;
+  unsigned long elapsed = millis() - startMs;
   if (elapsed >= delayMs) {
     return false;  // already expired, about to fire
   }
@@ -406,15 +418,15 @@ bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_nam
 void loopBLE() {
   bool shouldRun = false;
   char commandToRun[BLE_SCHEDULE_CMD_NAME_MAX] = "";
-  unsigned long nowMs = millis();
 
-  // Delayed command: if armed and timeout elapsed since last heartbeat, run the scheduled command once.
+  // Fire once when disconnect countdown elapses. Sample millis() under the lock.
   {
     ScheduleStateLock lock;
     if (!lock) return;
-    if (scheduledArmed && scheduledCommandName[0] != '\0' &&
-        (nowMs - lastHeartbeatMs) >= scheduledDelayMs) {
-      scheduledArmed = false;
+    const unsigned long nowMs = millis();
+    if (countdownActive && scheduledCommandName[0] != '\0' &&
+        (nowMs - countdownStartMs) >= scheduledDelayMs) {
+      countdownActive = false;
       strncpy(commandToRun, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
       commandToRun[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
       shouldRun = true;
