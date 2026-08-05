@@ -111,8 +111,8 @@ sequenceDiagram
 
 ### First-time pairing
 
-1. Power on the ESP32. It begins advertising as **"IR Blaster"**.
-2. On your Mac (or phone), scan for BLE devices. You will see "IR Blaster" with the service UUID `e97a0001-…`.
+1. Set `BLE_DEVICE_NAME` in `.env`, build the firmware, and power on the ESP32. It begins advertising with that name.
+2. On your Mac (or phone), scan for BLE devices. You will see the configured name with the service UUID `e97a0001-…`.
 3. Connect. With the default **Just Works** mode (`BLE_USE_PASSKEY` = 0), no passkey is required — pairing completes automatically and the link is encrypted and bonded.
 4. If you have enabled passkey mode (`BLE_USE_PASSKEY` = 1 in `src/secrets.h`), the ESP32 displays a 6-digit passkey on the serial monitor; enter it in the pairing dialog on your Mac/phone.
 5. Once paired, the bond keys are stored in NVS on both devices.
@@ -156,7 +156,7 @@ All command names and delays are configured on the client; the ESP32 provides "r
 
 Before building a dedicated app, you can verify BLE operation using the free **nRF Connect** app (available for macOS, iOS, and Android):
 
-1. Open nRF Connect and scan for devices. Find **"IR Blaster"**.
+1. Open nRF Connect and scan for the `BLE_DEVICE_NAME` configured in `.env`.
 2. Tap **Connect**. With default firmware no passkey is needed; if you enabled `BLE_USE_PASSKEY`, enter the passkey shown on Serial.
 3. Expand the service `e97a0001-…`. You will see four characteristics.
 4. **Read** `e97a0002-…` (Saved Codes) — you should see the JSON array of your stored commands.

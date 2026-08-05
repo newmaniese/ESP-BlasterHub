@@ -42,13 +42,21 @@ def _as_int(raw, default, min_v, max_v):
 project_dir = Path(env["PROJECT_DIR"])  # type: ignore[name-defined]
 dotenv = _load_dotenv(project_dir / ".env")
 
+ble_device_name = dotenv.get("BLE_DEVICE_NAME", "").strip()
+if not ble_device_name:
+    raise ValueError("BLE_DEVICE_NAME must be set in .env")
+
 ir_recv_enabled = _as_bool01(dotenv.get("IR_RECV_ENABLED", "1"))
 ir_send_repeat = _as_int(dotenv.get("IR_SEND_REPEAT", "1"), default=1, min_v=1, max_v=20)
 
 env.Append(  # type: ignore[name-defined]
     CPPDEFINES=[
+        ("BLE_DEVICE_NAME", env.StringifyMacro(ble_device_name)),  # type: ignore[name-defined]
         ("IR_RECV_ENABLED", ir_recv_enabled),
         ("IR_SEND_REPEAT", ir_send_repeat),
     ]
 )
-print(f"[pio_env_flags] IR_RECV_ENABLED={ir_recv_enabled} IR_SEND_REPEAT={ir_send_repeat}")
+print(
+    f"[pio_env_flags] BLE_DEVICE_NAME={ble_device_name!r} "
+    f"IR_RECV_ENABLED={ir_recv_enabled} IR_SEND_REPEAT={ir_send_repeat}"
+)

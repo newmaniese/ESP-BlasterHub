@@ -10,7 +10,9 @@
 
 #include "secrets.h"
 
-#define BLE_DEVICE_NAME          "IR Blaster"
+#ifndef BLE_DEVICE_NAME
+#error "BLE_DEVICE_NAME must be supplied by scripts/pio_env_flags.py from .env"
+#endif
 
 // Pairing: "Just Works" (no passkey) by default.
 // To require a passkey, #define BLE_USE_PASSKEY 1 in src/secrets.h.

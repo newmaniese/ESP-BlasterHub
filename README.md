@@ -25,6 +25,12 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 2. **WiFi / build options**  
    Copy `.env.example` to `.env` and set `WIFI_SSID` / `WIFI_PASS` (used for local config). Firmware WiFi still comes from `src/secrets.h` (copy from `src/secrets.h.example`).
 
+   Set the name advertised over Bluetooth:
+   ```bash
+   BLE_DEVICE_NAME=IR Blaster
+   ```
+   This value is required at build time.
+
    For **transmit-only** boards (no IR receiver), set in `.env`:
    ```bash
    IR_RECV_ENABLED=0
