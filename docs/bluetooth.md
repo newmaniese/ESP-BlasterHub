@@ -9,7 +9,7 @@ The IR Blaster exposes a BLE GATT service that lets a paired computer (or phone)
 - **Transport:** Bluetooth Low Energy 5.0 (ESP32-C3 supports BLE only, not Classic Bluetooth).
 - **Library:** Built-in Arduino-ESP32 BLE (Bluedroid stack). The `huge_app.csv` partition scheme provides enough flash for BLE + WiFi + IRremote.
 - **Security:** Bonding + encryption (LE Secure Connections). By default pairing is **Just Works** (no passkey). You can enable passkey entry in [`src/secrets.h`](../src/secrets.h.example) by setting `BLE_USE_PASSKEY` to `1` and defining a `BLE_PASSKEY`.
-- **Reconnection:** The ESP32 restarts advertising after any disconnect, so a bonded client reconnects automatically when back in range.
+- **Reconnection:** The ESP32 restarts advertising after any disconnect, so a bonded client reconnects automatically when back in range. A half-open link (no GATT traffic while still "connected") is force-dropped after an idle timeout so it cannot wedge the device.
 
 BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue to work normally.
 
@@ -23,7 +23,7 @@ BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue 
 | Saved Codes | `e97a0002-c116-4a63-a60f-0e9b4d3648f3` | Read (encrypted) | JSON array | Full list of stored IR codes, same shape as `GET /saved` |
 | Send Command | `e97a0003-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | 1 byte: NVS index | Write the index of a saved code to transmit it |
 | Status | `e97a0004-c116-4a63-a60f-0e9b4d3648f3` | Read + Notify (encrypted) | UTF-8 string | Result after a send: `OK:<name>` or `ERR:<reason>` |
-| Schedule | `e97a0005-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | JSON (see below) | Configure the command that runs after a BLE disconnect delay |
+| Schedule | `e97a0005-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | JSON (see below) | Configure the command that runs after a BLE disconnect delay, or send a keepalive heartbeat |
 
 All characteristics require an **encrypted and authenticated** connection (bonding must be completed before any access).
 
@@ -79,11 +79,20 @@ Subscribe to notifications on this characteristic to receive the result immediat
 
 ### Schedule payload
 
-Write UTF-8 JSON to configure the disconnect-delayed command:
+Write UTF-8 JSON to configure the disconnect-delayed command or to send a keepalive:
 
 - **Configure:** `{"delay_seconds": 900, "command": "Off"}` — Stores the saved-code **name** (case-insensitive lookup) and delay. The countdown does **not** start while connected. A new configure replaces the previous one and cancels any active countdown.
+- **Heartbeat:** `{"heartbeat": true}` — Keepalive while connected. Resets the half-open link watchdog (see below) so a healthy but idle connection is not dropped. It does not arm or start a countdown.
 
 When the BLE client disconnects, the ESP32 starts the countdown. If the client reconnects before the delay elapses, the countdown is cancelled. If the delay expires while disconnected, the ESP32 looks up the command by name, sends it, and notifies Status (e.g. `OK:scheduled Off`). The countdown stops (configuration remains until replaced).
+
+### Half-open link watchdog
+
+If the BLE stack still reports a client connected but no GATT read or write arrives for `BLE_LINK_IDLE_TIMEOUT_MS` (default **180 seconds**), the ESP32 treats the link as dead: it force-disconnects, restarts advertising, and starts the disconnect countdown if a command is configured.
+
+This recovers from half-open links, where the client is gone (sleeping laptop, out-of-range walk-off) but the ESP32 never received a disconnect event — previously the device would sit "connected" forever, unreachable and with no countdown running.
+
+Because any read or write counts as activity, clients should write a Schedule heartbeat every ~60 seconds so a healthy idle connection is not dropped. Override the timeout by defining `BLE_LINK_IDLE_TIMEOUT_MS` at build time.
 
 ---
 
@@ -132,7 +141,7 @@ To remove all stored bonds and force re-pairing:
 
 ## Auto-reconnect behavior
 
-- **ESP32 side:** The `onDisconnect` callback restarts BLE advertising immediately, so the device is always connectable.
+- **ESP32 side:** The `onDisconnect` callback — and the [half-open link watchdog](#half-open-link-watchdog) — restart BLE advertising immediately, so the device is always connectable after either a real or a half-open link loss.
 - **macOS side:** CoreBluetooth's `connectPeripheral:options:` queues a reconnection request. When the ESP32 comes back in range and starts advertising, macOS reconnects automatically. The app does not need to scan again.
 
 This means: if you walk away from the ESP32 with your laptop and come back, the connection resumes without user action.
@@ -145,8 +154,9 @@ The ESP32 does **not** auto-send "On" on connect. Instead, a client can:
 
 1. **On connect:** Send "On" by writing the appropriate saved-code index to Send Command (the client resolves names to indices via the Saved Codes characteristic).
 2. **Configure a disconnect command:** Write to Schedule: `{"delay_seconds": 900, "command": "Off"}`. This only stores the command and delay; the countdown does not run while connected.
-3. **On disconnect:** The ESP32 starts the countdown. After `delay_seconds` without a reconnect, it runs the scheduled command (e.g. "Off") once.
-4. **On reconnect:** The countdown is cancelled; the client typically re-configures Schedule.
+3. **Send heartbeats:** While connected, write `{"heartbeat": true}` to Schedule periodically (e.g. every 60 seconds) so the idle watchdog does not force-drop a healthy link.
+4. **On disconnect (or an idle-timeout force-drop):** The ESP32 starts the countdown. After `delay_seconds` without a reconnect, it runs the scheduled command (e.g. "Off") once.
+5. **On reconnect:** The countdown is cancelled; the client typically re-configures Schedule.
 
 All command names and delays are configured on the client; the ESP32 provides "run command by name T seconds after disconnect." See [Schedule payload](#schedule-payload) above for the JSON format.
 
@@ -163,7 +173,7 @@ Before building a dedicated app, you can verify BLE operation using the free **n
 5. **Subscribe** to notifications on `e97a0004-…` (Status).
 6. **Write** a single byte (e.g., `0x00`) to `e97a0003-…` (Send Command).
 7. Check that the Status notification shows `OK:<name>` and the IR LED fires.
-8. **Write** to `e97a0005-…` (Schedule) to configure a disconnect-delayed command (e.g. `{"delay_seconds": 900, "command": "Off"}`).
+8. **Write** to `e97a0005-…` (Schedule) to configure a disconnect-delayed command (e.g. `{"delay_seconds": 900, "command": "Off"}`), or `{"heartbeat": true}` to send a keepalive.
 
 ---
 
@@ -202,8 +212,8 @@ The device must be powered on, advertising, and already bonded with the Mac runn
 
 | File | Purpose |
 |------|---------|
-| [`include/ble_server.h`](../include/ble_server.h) | UUIDs, device name, public API (`setupBLE`, `loopBLE`) |
-| [`src/ble_server.cpp`](../src/ble_server.cpp) | Bluedroid GATT server: service, characteristics, security, callbacks, Schedule (disconnect-delayed command) |
+| [`include/ble_server.h`](../include/ble_server.h) | UUIDs, device name, idle timeout, public API (`setupBLE`, `loopBLE`) |
+| [`src/ble_server.cpp`](../src/ble_server.cpp) | Bluedroid GATT server: service, characteristics, security, callbacks, Schedule (disconnect-delayed command), half-open link watchdog |
 | [`src/main.cpp`](../src/main.cpp) | `sendSavedCode()` and `getSavedCodesJson()` shared helpers; `setupBLE()` called from `setup()` |
 | [`test/integration/test_ble.py`](../test/integration/test_ble.py) | pytest + bleak integration tests |
 
