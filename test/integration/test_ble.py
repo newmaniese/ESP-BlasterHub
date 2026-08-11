@@ -208,7 +208,7 @@ class TestSendCommand:
 # ---------------------------------------------------------------------------
 
 class TestScheduleCharacteristic:
-    """Write schedule payloads (arm and heartbeat) and verify no ERR."""
+    """Write schedule payloads."""
 
     @pytest.mark.asyncio
     async def test_schedule_arm_and_heartbeat(self, client):
@@ -232,5 +232,16 @@ class TestStatusCharacteristic:
     async def test_read_status(self, client):
         raw = await client.read_gatt_char(CHAR_STATUS_UUID)
         text = raw.decode("utf-8")
-        # After boot it should be "READY"; after a send it will be "OK:…" or "ERR:…"
+        # On connect this is the reconnect snapshot JSON; after a send it becomes
+        # "OK:…" or "ERR:…"
         assert len(text) > 0, "Status characteristic is empty"
+
+    @pytest.mark.asyncio
+    async def test_status_holds_reconnect_snapshot_on_connect(self, client):
+        """The client fixture connects fresh, so no send has overwritten it yet."""
+        raw = await client.read_gatt_char(CHAR_STATUS_UUID)
+        snapshot = json.loads(raw.decode("utf-8"))
+        assert snapshot["state"] in ("none", "interrupted", "expired")
+        assert isinstance(snapshot["remaining_seconds"], int)
+        assert snapshot["remaining_seconds"] >= 0
+        assert isinstance(snapshot["command"], str)

@@ -48,15 +48,18 @@ if not ble_device_name:
 
 ir_recv_enabled = _as_bool01(dotenv.get("IR_RECV_ENABLED", "1"))
 ir_send_repeat = _as_int(dotenv.get("IR_SEND_REPEAT", "1"), default=1, min_v=1, max_v=20)
+wifi_enabled = _as_bool01(dotenv.get("WIFI_ENABLED", "1"))
 
 env.Append(  # type: ignore[name-defined]
     CPPDEFINES=[
         ("BLE_DEVICE_NAME", env.StringifyMacro(ble_device_name)),  # type: ignore[name-defined]
         ("IR_RECV_ENABLED", ir_recv_enabled),
         ("IR_SEND_REPEAT", ir_send_repeat),
+        ("WIFI_ENABLED", wifi_enabled),
     ]
 )
 print(
     f"[pio_env_flags] BLE_DEVICE_NAME={ble_device_name!r} "
-    f"IR_RECV_ENABLED={ir_recv_enabled} IR_SEND_REPEAT={ir_send_repeat}"
+    f"IR_RECV_ENABLED={ir_recv_enabled} IR_SEND_REPEAT={ir_send_repeat} "
+    f"WIFI_ENABLED={wifi_enabled}"
 )

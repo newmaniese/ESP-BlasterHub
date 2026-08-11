@@ -43,6 +43,12 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
    ```
    Default is `1` (range 1–20). Used for saved-code Send (UI/BLE) and as the default when HTTP/WS omit `repeat`.
 
+   For **BLE-only** operation (no web UI or HTTP API), set:
+   ```bash
+   WIFI_ENABLED=0
+   ```
+   This powers the WiFi radio down and skips the HTTP server. Worth doing when the device has no reachable network: WiFi and BLE share one 2.4 GHz radio, and the WiFi stack retries association indefinitely, which destabilises the BLE link. Default is `1`.
+
 3. **Build and install** (firmware + frontend)
    ```bash
    make build

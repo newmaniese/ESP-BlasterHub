@@ -5,15 +5,19 @@
 // Exposes four characteristics behind bonded encryption:
 //   - Saved Codes  (Read)   — JSON array of stored IR commands
 //   - Send Command (Write)  — write a single byte (NVS index) to send that code
-//   - Status       (Notify) — result string after a send ("OK:<name>" or "ERR:…")
-//   - Schedule     (Write)  — JSON: configure disconnect-delayed command, or heartbeat
+//   - Status  (Read/Notify) — notifies the result string after a send
+//                             ("OK:<name>" or "ERR:…"); on connect its value is
+//                             the reconnect-countdown snapshot JSON
+//   - Schedule     (Write)  — configure the disconnect delay; heartbeat
 //
 // Security: bonding + MITM + Secure Connections, passkey displayed on Serial.
 // Auto-reconnect: advertising restarts on disconnect so the client reconnects.
 //
 // Half-open links: if the stack reports "connected" but no GATT traffic arrives
 // for BLE_LINK_IDLE_TIMEOUT_MS, force-disconnect and restart advertising so the
-// client can reconnect and the disconnect countdown can start.
+// client can reconnect and the disconnect countdown can start. The teardown is
+// keyed to the connection that was judged idle, since a client reconnecting in
+// the meantime must not be the one dropped.
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -56,11 +60,18 @@ static uint32_t scheduledDelayMs   = 0;
 static unsigned long countdownStartMs = 0;
 static bool     scheduleConfigured = false;
 static bool     countdownActive    = false;
+static bool     countdownExpiredSinceLastConnect = false;
+static char     reconnectCountdownState[12] = "none";
+static uint32_t reconnectCountdownRemainingSec = 0;
+static char     reconnectCountdownCommand[BLE_SCHEDULE_CMD_NAME_MAX] = "";
 static SemaphoreHandle_t scheduleStateMutex = nullptr;
 
-// Half-open link watchdog state.
+// Half-open link watchdog state. The epoch is bumped on every connect so the
+// watchdog can tell whether the link it judged idle is still the current one.
 static volatile unsigned long lastGattActivityMs = 0;
 static volatile bool          linkLostInProgress = false;
+static volatile uint32_t      connectionEpoch = 0;
+static volatile uint16_t      currentConnId = 0;
 
 static bool initScheduleStateMutex() {
   if (scheduleStateMutex != nullptr) return true;
@@ -105,6 +116,47 @@ static void startCountdownLocked() {
   }
   countdownStartMs = millis();
   countdownActive = true;
+  countdownExpiredSinceLastConnect = false;
+}
+
+static void snapshotCountdownOnConnectLocked() {
+  strcpy(reconnectCountdownState, "none");
+  reconnectCountdownRemainingSec = 0;
+  reconnectCountdownCommand[0] = '\0';
+
+  if (scheduledCommandName[0] != '\0') {
+    strncpy(
+        reconnectCountdownCommand,
+        scheduledCommandName,
+        BLE_SCHEDULE_CMD_NAME_MAX - 1);
+    reconnectCountdownCommand[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+  }
+
+  if (countdownActive) {
+    const uint32_t elapsed = (uint32_t)(millis() - countdownStartMs);
+    if (elapsed < scheduledDelayMs) {
+      strcpy(reconnectCountdownState, "interrupted");
+      reconnectCountdownRemainingSec =
+          (scheduledDelayMs - elapsed + 999) / 1000;
+    } else {
+      strcpy(reconnectCountdownState, "expired");
+    }
+  } else if (countdownExpiredSinceLastConnect) {
+    strcpy(reconnectCountdownState, "expired");
+  }
+
+  countdownExpiredSinceLastConnect = false;
+  cancelCountdownLocked();
+}
+
+static String reconnectSnapshotJsonLocked() {
+  JsonDocument doc;
+  doc["state"] = reconnectCountdownState;
+  doc["remaining_seconds"] = reconnectCountdownRemainingSec;
+  doc["command"] = reconnectCountdownCommand;
+  String payload;
+  serializeJson(doc, payload);
+  return payload;
 }
 
 static void noteGattActivity() {
@@ -122,9 +174,18 @@ static void setStatus(const String& msg) {
 // Shared teardown for real disconnects and half-open watchdog trips: start the
 // countdown, restart advertising, and (for a half-open link) drop the stale
 // connection first so the stack will advertise again.
-static void handleLinkLost(const char* reason, bool forceDisconnect) {
+static void handleLinkLost(const char* reason, bool forceDisconnect,
+                           uint32_t expectedEpoch = 0, uint16_t staleConnId = 0) {
   if (linkLostInProgress) return;
   linkLostInProgress = true;
+
+  // The client can reconnect between the watchdog's idle check and this call.
+  // Tearing down then would drop the fresh, healthy link rather than the stale
+  // one, so bail out and let the new connection live.
+  if (forceDisconnect && connectionEpoch != expectedEpoch) {
+    linkLostInProgress = false;
+    return;
+  }
 
   deviceConnected = false;
 
@@ -147,8 +208,10 @@ static void handleLinkLost(const char* reason, bool forceDisconnect) {
     }
   }
 
+  // Drop the connection the watchdog judged idle by id, so a reconnect that
+  // races this teardown is never the one that gets closed.
   if (forceDisconnect && pServer != nullptr) {
-    pServer->disconnect(pServer->getConnId());
+    pServer->disconnect(staleConnId);
   }
   BLEDevice::startAdvertising();
 
@@ -166,14 +229,26 @@ static void handleLinkLost(const char* reason, bool forceDisconnect) {
 // ---------------------------------------------------------------------------
 class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
-    (void)pServer;
     deviceConnected = true;
+    currentConnId = pServer->getConnId();
+    connectionEpoch++;
     noteGattActivity();
+    String snapshot;
     {
       ScheduleStateLock lock;
       if (lock) {
-        cancelCountdownLocked();
+        // Preserve the device-side countdown result for the newly connected
+        // client to read before cancelling the live timer.
+        snapshotCountdownOnConnectLocked();
+        snapshot = reconnectSnapshotJsonLocked();
       }
+    }
+    // Parked in Status rather than exposed as a Schedule read: macOS caches the
+    // GATT table of a bonded peripheral, so a newly readable characteristic
+    // stays invisible until the bond is removed. Published without notifying —
+    // the client reads Status once on connect, before any command result lands.
+    if (snapshot.length() > 0) {
+      pStatusChar->setValue(snapshot.c_str());
     }
     printf("[BLE] Client connected\n");
   }
@@ -306,6 +381,7 @@ private:
   // If a countdown is somehow running (e.g. a half-open link that recovered),
   // postpone it rather than letting it fire under a live client.
   void handleHeartbeat() {
+    printf("[BLE] Heartbeat\n");
     ScheduleStateLock lock;
     if (!lock) {
       setStatus("ERR:schedule lock");
@@ -501,9 +577,18 @@ bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_nam
 void loopBLE() {
   // Half-open watchdog: the stack still reports a client, but no GATT traffic
   // has arrived for too long, so treat the link as dead.
-  if (deviceConnected &&
-      (millis() - lastGattActivityMs) >= BLE_LINK_IDLE_TIMEOUT_MS) {
-    handleLinkLost("GATT idle timeout", true);
+  // Sample the activity stamp before the clock. Read the other way round, a GATT
+  // callback landing between the two reads leaves the stamp ahead of "now" and
+  // the unsigned subtraction wraps to ~49 days, tripping the watchdog on a
+  // perfectly healthy link — which looks like a client that connects and is
+  // dropped a second later. This order also keeps millis() wrap-around correct.
+  const unsigned long lastActivity = lastGattActivityMs;
+  const unsigned long idleMs = millis() - lastActivity;
+  if (deviceConnected && idleMs >= BLE_LINK_IDLE_TIMEOUT_MS) {
+    char reason[64];
+    snprintf(reason, sizeof(reason), "GATT idle timeout, %lus since traffic",
+             (unsigned long)(idleMs / 1000UL));
+    handleLinkLost(reason, true, connectionEpoch, currentConnId);
   }
 
   bool shouldRun = false;
@@ -517,6 +602,7 @@ void loopBLE() {
     if (countdownActive && !deviceConnected && scheduledCommandName[0] != '\0' &&
         (nowMs - countdownStartMs) >= scheduledDelayMs) {
       countdownActive = false;
+      countdownExpiredSinceLastConnect = true;
       strncpy(commandToRun, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
       commandToRun[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
       shouldRun = true;

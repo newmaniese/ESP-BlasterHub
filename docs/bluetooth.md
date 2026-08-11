@@ -22,8 +22,8 @@ BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue 
 | **IR Control Service** | `e97a0001-c116-4a63-a60f-0e9b4d3648f3` | -- | -- | Service container |
 | Saved Codes | `e97a0002-c116-4a63-a60f-0e9b4d3648f3` | Read (encrypted) | JSON array | Full list of stored IR codes, same shape as `GET /saved` |
 | Send Command | `e97a0003-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | 1 byte: NVS index | Write the index of a saved code to transmit it |
-| Status | `e97a0004-c116-4a63-a60f-0e9b4d3648f3` | Read + Notify (encrypted) | UTF-8 string | Result after a send: `OK:<name>` or `ERR:<reason>` |
-| Schedule | `e97a0005-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | JSON (see below) | Configure the command that runs after a BLE disconnect delay, or send a keepalive heartbeat |
+| Status | `e97a0004-c116-4a63-a60f-0e9b4d3648f3` | Read + Notify (encrypted) | UTF-8 string | Notifies the result after a send: `OK:<name>` or `ERR:<reason>`. On connect its value is the reconnect countdown snapshot (JSON, see below) |
+| Schedule | `e97a0005-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | JSON (see below) | Configure the disconnect-delayed command, or send a keepalive |
 
 All characteristics require an **encrypted and authenticated** connection (bonding must be completed before any access).
 
@@ -77,9 +77,31 @@ A short UTF-8 string updated after every send attempt:
 
 Subscribe to notifications on this characteristic to receive the result immediately after writing to Send Command.
 
+### Reconnect countdown snapshot
+
+On every connect the ESP32 records what happened to the disconnect countdown and
+parks it in **Status** as JSON, before cancelling the live timer:
+
+- `{"state":"interrupted","remaining_seconds":742,"command":"Off"}` — this
+  connection arrived before the deadline and canceled the countdown.
+- `{"state":"expired","remaining_seconds":0,"command":"Off"}` — the deadline
+  elapsed before this connection.
+- `{"state":"none","remaining_seconds":0,"command":""}` — no disconnect
+  countdown preceded this connection.
+
+It is the source of truth for clients deciding whether a reconnect should replay
+startup commands. **Read it before the first send of the connection:** Status
+also carries command results, so a send replaces the snapshot with `OK:<name>`.
+
+The snapshot rides on Status rather than a readable Schedule characteristic
+because macOS caches the GATT table of a bonded peripheral. Adding a `Read`
+property to an existing characteristic stays invisible to an already-paired Mac
+— CoreBluetooth rejects the read locally with "Read Not Permitted" and never
+puts a request on air — until the bond is removed and the device re-paired.
+
 ### Schedule payload
 
-Write UTF-8 JSON to configure the disconnect-delayed command or to send a keepalive:
+Write UTF-8 JSON to configure the disconnect-delayed command or send a keepalive:
 
 - **Configure:** `{"delay_seconds": 900, "command": "Off"}` — Stores the saved-code **name** (case-insensitive lookup) and delay. The countdown does **not** start while connected. A new configure replaces the previous one and cancels any active countdown.
 - **Heartbeat:** `{"heartbeat": true}` — Keepalive while connected. Resets the half-open link watchdog (see below) so a healthy but idle connection is not dropped. It does not arm or start a countdown.
@@ -91,6 +113,11 @@ When the BLE client disconnects, the ESP32 starts the countdown. If the client r
 If the BLE stack still reports a client connected but no GATT read or write arrives for `BLE_LINK_IDLE_TIMEOUT_MS` (default **180 seconds**), the ESP32 treats the link as dead: it force-disconnects, restarts advertising, and starts the disconnect countdown if a command is configured.
 
 This recovers from half-open links, where the client is gone (sleeping laptop, out-of-range walk-off) but the ESP32 never received a disconnect event — previously the device would sit "connected" forever, unreachable and with no countdown running.
+
+Two races make this watchdog easy to get wrong, and both present as a client that connects and is dropped again a second or two later:
+
+- **Reading the clock before the activity stamp.** GATT callbacks update the stamp from the Bluetooth task. If the stamp is read after `millis()`, a callback landing between the two reads leaves it ahead of "now", and the unsigned subtraction wraps to ~49 days — instantly exceeding any timeout. The stamp must be sampled first.
+- **Tearing down "the current connection".** A client can reconnect between the idle check and the teardown, so the drop is keyed to the connection that was judged idle, by connection id plus a counter bumped on every connect.
 
 Because any read or write counts as activity, clients should write a Schedule heartbeat every ~60 seconds so a healthy idle connection is not dropped. Override the timeout by defining `BLE_LINK_IDLE_TIMEOUT_MS` at build time.
 
@@ -156,7 +183,7 @@ The ESP32 does **not** auto-send "On" on connect. Instead, a client can:
 2. **Configure a disconnect command:** Write to Schedule: `{"delay_seconds": 900, "command": "Off"}`. This only stores the command and delay; the countdown does not run while connected.
 3. **Send heartbeats:** While connected, write `{"heartbeat": true}` to Schedule periodically (e.g. every 60 seconds) so the idle watchdog does not force-drop a healthy link.
 4. **On disconnect (or an idle-timeout force-drop):** The ESP32 starts the countdown. After `delay_seconds` without a reconnect, it runs the scheduled command (e.g. "Off") once.
-5. **On reconnect:** The countdown is cancelled; the client typically re-configures Schedule.
+5. **On reconnect:** The countdown is cancelled; the client reads the [reconnect countdown snapshot](#reconnect-countdown-snapshot) from Status to decide whether to replay its on-connect commands, then re-configures Schedule.
 
 All command names and delays are configured on the client; the ESP32 provides "run command by name T seconds after disconnect." See [Schedule payload](#schedule-payload) above for the JSON format.
 
@@ -203,8 +230,8 @@ The device must be powered on, advertising, and already bonded with the Mac runn
 - **Saved Codes** — read returns valid JSON array with expected keys.
 - **Send Command** — write index 0 and verify `OK:` status notification.
 - **Invalid Index** — write index 255 and verify `ERR:` status notification.
-- **Schedule** — write configure (`{"delay_seconds", "command"}`); writes succeed.
-- **Status Read** — characteristic is non-empty.
+- **Schedule** — write configure (`{"delay_seconds", "command"}`) and heartbeat.
+- **Status Read** — characteristic is non-empty and holds the reconnect snapshot on connect.
 
 ---
 

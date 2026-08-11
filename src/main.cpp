@@ -878,6 +878,14 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
 }
 
 void setupWifi() {
+#if !WIFI_ENABLED
+  // The ESP32-C3 shares one 2.4 GHz radio between WiFi and BLE. An unreachable
+  // network keeps the WiFi stack retrying association forever, which competes
+  // with BLE, so power the radio down instead of leaving it half-configured.
+  WiFi.mode(WIFI_OFF);
+  printf("[IR] WiFi disabled (WIFI_ENABLED=0) — BLE only\n");
+  return;
+#endif
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   printf("[IR] Connecting to Wi-Fi\n");
@@ -924,6 +932,10 @@ void setupIR() {
 }
 
 void setupWebserver() {
+#if !WIFI_ENABLED
+  printf("[IR] HTTP server skipped (WIFI_ENABLED=0)\n");
+  return;
+#endif
   server.on("/", HTTP_GET, handleRoot);
   // Serve static assets from LittleFS (app.css, app.js, etc.)
   server.serveStatic("/app.css", LittleFS, "/app.css").setCacheControl("max-age=86400");
@@ -970,17 +982,21 @@ void handleHeartbeat() {
   static uint32_t lastStatusPrint = 0;
   if (millis() - lastStatusPrint >= 1000) {
     lastStatusPrint = millis();
-    if (WiFi.status() == WL_CONNECTED) {
-      printf("[IR] IP: %s", WiFi.localIP().toString().c_str());
-      uint32_t sec;
-      char cmd[BLE_SCHEDULE_CMD_NAME_MAX];
-      if (getScheduleCountdown(&sec, cmd, sizeof(cmd))) {
-        printf("  (%u s until %s)", (unsigned)sec, cmd);
-      }
-      printf("\n");
-    } else {
+#if WIFI_ENABLED
+    if (WiFi.status() != WL_CONNECTED) {
       printf("[IR] (WiFi not connected)\n");
+      return;
     }
+    printf("[IR] IP: %s", WiFi.localIP().toString().c_str());
+#else
+    printf("[IR] (BLE only)");
+#endif
+    uint32_t sec;
+    char cmd[BLE_SCHEDULE_CMD_NAME_MAX];
+    if (getScheduleCountdown(&sec, cmd, sizeof(cmd))) {
+      printf("  (%u s until %s)", (unsigned)sec, cmd);
+    }
+    printf("\n");
   }
 }
 

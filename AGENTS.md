@@ -47,6 +47,7 @@ Equivalent PlatformIO: `pio run --target upload`, then `buildfs`, then `uploadfs
 
 Transmit-only (no IR receiver): set `IR_RECV_ENABLED=0` in `.env` before building (`scripts/pio_env_flags.py` passes `-DIR_RECV_ENABLED=…`).
 Default IR burst count: `IR_SEND_REPEAT` in `.env` (1–20; default 1).
+BLE-only (WiFi radio off, no HTTP server): set `WIFI_ENABLED=0` in `.env`. Use when no configured network is reachable — WiFi association retries share the radio with BLE and destabilise the link.
 
 ## Testing
 
