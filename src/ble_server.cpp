@@ -6,10 +6,14 @@
 //   - Saved Codes  (Read)   — JSON array of stored IR commands
 //   - Send Command (Write)  — write a single byte (NVS index) to send that code
 //   - Status       (Notify) — result string after a send ("OK:<name>" or "ERR:…")
-//   - Schedule     (Write)  — JSON: configure disconnect-delayed command
+//   - Schedule     (Write)  — JSON: configure disconnect-delayed command, or heartbeat
 //
 // Security: bonding + MITM + Secure Connections, passkey displayed on Serial.
 // Auto-reconnect: advertising restarts on disconnect so the client reconnects.
+//
+// Half-open links: if the stack reports "connected" but no GATT traffic arrives
+// for BLE_LINK_IDLE_TIMEOUT_MS, force-disconnect and restart advertising so the
+// client can reconnect and the disconnect countdown can start.
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -44,7 +48,7 @@ static BLECharacteristic* pSavedChar   = nullptr;
 static BLECharacteristic* pSendChar    = nullptr;
 static BLECharacteristic* pStatusChar  = nullptr;
 static BLECharacteristic* pScheduleChar = nullptr;
-static bool               deviceConnected = false;
+static volatile bool      deviceConnected = false;
 
 // Disconnect-delayed command: configure while connected; countdown starts on disconnect.
 static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
@@ -53,6 +57,10 @@ static unsigned long countdownStartMs = 0;
 static bool     scheduleConfigured = false;
 static bool     countdownActive    = false;
 static SemaphoreHandle_t scheduleStateMutex = nullptr;
+
+// Half-open link watchdog state.
+static volatile unsigned long lastGattActivityMs = 0;
+static volatile bool          linkLostInProgress = false;
 
 static bool initScheduleStateMutex() {
   if (scheduleStateMutex != nullptr) return true;
@@ -99,12 +107,58 @@ static void startCountdownLocked() {
   countdownActive = true;
 }
 
+static void noteGattActivity() {
+  lastGattActivityMs = millis();
+}
+
 // Helper: set Status characteristic and notify if connected.
 static void setStatus(const String& msg) {
   pStatusChar->setValue(msg.c_str());
   if (deviceConnected) {
     pStatusChar->notify();
   }
+}
+
+// Shared teardown for real disconnects and half-open watchdog trips: start the
+// countdown, restart advertising, and (for a half-open link) drop the stale
+// connection first so the stack will advertise again.
+static void handleLinkLost(const char* reason, bool forceDisconnect) {
+  if (linkLostInProgress) return;
+  linkLostInProgress = true;
+
+  deviceConnected = false;
+
+  bool countdownStarted = false;
+  uint32_t delaySec = 0;
+  char commandCopy[BLE_SCHEDULE_CMD_NAME_MAX] = "";
+  {
+    ScheduleStateLock lock;
+    if (lock) {
+      // A forced drop is followed by the stack's own onDisconnect, so only the
+      // first link-loss event may set the countdown start time.
+      const bool alreadyCounting = countdownActive;
+      if (!alreadyCounting) {
+        startCountdownLocked();
+      }
+      countdownStarted = countdownActive && !alreadyCounting;
+      delaySec = (uint32_t)(scheduledDelayMs / 1000UL);
+      strncpy(commandCopy, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);
+      commandCopy[BLE_SCHEDULE_CMD_NAME_MAX - 1] = '\0';
+    }
+  }
+
+  if (forceDisconnect && pServer != nullptr) {
+    pServer->disconnect(pServer->getConnId());
+  }
+  BLEDevice::startAdvertising();
+
+  printf("[BLE] Link lost (%s) — restarting advertising\n", reason);
+  if (countdownStarted) {
+    printf("[BLE] Schedule: countdown started (%u s until %s)\n",
+           (unsigned)delaySec, commandCopy);
+  }
+
+  linkLostInProgress = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +168,7 @@ class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     (void)pServer;
     deviceConnected = true;
+    noteGattActivity();
     {
       ScheduleStateLock lock;
       if (lock) {
@@ -125,19 +180,7 @@ class IRServerCallbacks : public BLEServerCallbacks {
 
   void onDisconnect(BLEServer* pServer) override {
     (void)pServer;
-    deviceConnected = false;
-    {
-      ScheduleStateLock lock;
-      if (lock) {
-        startCountdownLocked();
-        if (countdownActive) {
-          printf("[BLE] Schedule: countdown started (%u s until %s)\n",
-                 (unsigned)(scheduledDelayMs / 1000UL), scheduledCommandName);
-        }
-      }
-    }
-    printf("[BLE] Client disconnected — restarting advertising\n");
-    BLEDevice::startAdvertising();
+    handleLinkLost("client disconnected", false);
   }
 };
 
@@ -192,6 +235,7 @@ class IRSecurityCallbacks : public BLESecurityCallbacks {
 // Saved Codes — compact JSON (index + name) to stay under 600-byte BLE limit.
 class SavedCodesCallbacks : public BLECharacteristicCallbacks {
   void onRead(BLECharacteristic* pCharacteristic) override {
+    noteGattActivity();
     String json = getSavedCodesJsonCompact();
     pCharacteristic->setValue(json.c_str());
     printf("[BLE] Saved codes read (%u bytes)\n", (unsigned)json.length());
@@ -201,6 +245,7 @@ class SavedCodesCallbacks : public BLECharacteristicCallbacks {
 // Send Command — the client writes one byte (the saved-code index).
 class SendCommandCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pCharacteristic) override {
+    noteGattActivity();
     std::string val = pCharacteristic->getValue();
     if (val.size() < 1) {
       setStatus("ERR:empty write");
@@ -223,10 +268,12 @@ class SendCommandCallbacks : public BLECharacteristicCallbacks {
 };
 
 // Schedule — JSON write: {"delay_seconds": N, "command": "Name"} configures the
-// command that runs Delay seconds after BLE disconnect (countdown starts on disconnect).
+// command that runs Delay seconds after BLE disconnect (countdown starts on
+// disconnect), or {"heartbeat": true} as a keepalive for the idle watchdog.
 class ScheduleCallbacks : public BLECharacteristicCallbacks {
 public:
   void onWrite(BLECharacteristic* pCharacteristic) override {
+    noteGattActivity();
     std::string val = pCharacteristic->getValue();
     if (val.size() == 0) {
       setStatus("ERR:schedule empty");
@@ -241,6 +288,11 @@ public:
       return;
     }
 
+    if (doc["heartbeat"].is<bool>() && doc["heartbeat"].as<bool>()) {
+      handleHeartbeat();
+      return;
+    }
+
     if (doc["delay_seconds"].is<int>() && doc["command"].is<const char*>()) {
       handleCommand(doc["delay_seconds"].as<int>(), doc["command"].as<const char*>());
       return;
@@ -250,6 +302,20 @@ public:
   }
 
 private:
+  // Keepalive only: the idle watchdog was already reset by noteGattActivity().
+  // If a countdown is somehow running (e.g. a half-open link that recovered),
+  // postpone it rather than letting it fire under a live client.
+  void handleHeartbeat() {
+    ScheduleStateLock lock;
+    if (!lock) {
+      setStatus("ERR:schedule lock");
+      return;
+    }
+    if (countdownActive) {
+      countdownStartMs = millis();
+    }
+  }
+
   void handleCommand(int sec, const char* cmd) {
     if (sec <= 0 || !cmd || !*cmd) {
       setStatus("ERR:schedule invalid");
@@ -361,6 +427,7 @@ static void setupBLEAdvertising() {
   BLEDevice::startAdvertising();
 
   printf("[BLE] Advertising started as \"%s\"\n", BLE_DEVICE_NAME);
+  printf("[BLE] Link idle timeout %lu s\n", (unsigned long)(BLE_LINK_IDLE_TIMEOUT_MS / 1000UL));
 }
 
 // ---------------------------------------------------------------------------
@@ -394,6 +461,7 @@ void setupBLE() {
 
   pService->start();
 
+  noteGattActivity();
   setupBLEAdvertising();
 }
 
@@ -431,6 +499,13 @@ bool getScheduleCountdown(uint32_t* out_seconds_remaining, char* out_command_nam
 }
 
 void loopBLE() {
+  // Half-open watchdog: the stack still reports a client, but no GATT traffic
+  // has arrived for too long, so treat the link as dead.
+  if (deviceConnected &&
+      (millis() - lastGattActivityMs) >= BLE_LINK_IDLE_TIMEOUT_MS) {
+    handleLinkLost("GATT idle timeout", true);
+  }
+
   bool shouldRun = false;
   char commandToRun[BLE_SCHEDULE_CMD_NAME_MAX] = "";
 
@@ -439,7 +514,7 @@ void loopBLE() {
     ScheduleStateLock lock;
     if (!lock) return;
     const unsigned long nowMs = millis();
-    if (countdownActive && scheduledCommandName[0] != '\0' &&
+    if (countdownActive && !deviceConnected && scheduledCommandName[0] != '\0' &&
         (nowMs - countdownStartMs) >= scheduledDelayMs) {
       countdownActive = false;
       strncpy(commandToRun, scheduledCommandName, BLE_SCHEDULE_CMD_NAME_MAX - 1);

@@ -24,10 +24,17 @@
 // Max delay_seconds so that delay_seconds * 1000 fits in uint32_t (avoids overflow).
 #define BLE_SCHEDULE_DELAY_SEC_MAX  (4294967u)  // UINT32_MAX / 1000
 
+// Force-drop a half-open link if no GATT read/write arrives for this long while
+// the stack still reports a client connected. Clients should send Schedule
+// heartbeats more often than this (e.g. every 60s).
+#ifndef BLE_LINK_IDLE_TIMEOUT_MS
+#define BLE_LINK_IDLE_TIMEOUT_MS  (180UL * 1000UL)
+#endif
+
 // Call from setup() after IR and NVS are ready.
 void setupBLE();
 
-// Call from loop(). Runs disconnect-countdown expiry when due.
+// Call from loop(). Runs disconnect-countdown expiry and the half-open link watchdog.
 void loopBLE();
 
 // If disconnect countdown is active, return true and fill seconds remaining and command name.
