@@ -27,9 +27,22 @@ For full logging behavior and examples, see [serial-monitor.md](serial-monitor.m
 
 ### Device never connects
 
-- Ensure `src/secrets.h` exists and contains valid `WIFI_SSID` and `WIFI_PASS`.
-- If needed, copy from `src/secrets.h.example` and fill in your credentials.
+- Ensure `.env` has non-empty `WIFI_SSID` and `WIFI_PASS`, then rebuild/upload.
+- Leave both empty only for intentional BLE-only builds (WiFi radio off).
 - Use a 2.4 GHz network (ESP32-C3 setups commonly fail on 5 GHz-only networks).
+
+## Bluetooth
+
+### Mac repeatedly reports “Peer removed pairing information”
+
+This is a stale bond left by older firmware. In **System Settings → Bluetooth**,
+forget the blaster once, then reconnect. Current firmware uses encrypted
+non-bonded sessions, so this mismatch cannot recur.
+
+### Client connects but operations are unauthorized
+
+- Set a random 16–64 character `BLE_AUTH_TOKEN` in firmware `.env` and reflash.
+- Put the exact same value in the Mac client's `config.yaml` as `ble.auth_token`.
 
 ## Web UI
 

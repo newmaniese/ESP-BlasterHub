@@ -8,7 +8,7 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 - **Send:** IR LED on GPIO 4 (via transistor); NEC codes via HTTP or WebSocket, or one-click **Send** on stored codes with large touch-friendly buttons. A modal confirms "Sent: *name*" without leaving the page.
 - **Store:** Save codes from the last-received list or enter them manually (name, protocol, value, bits). Stored in NVS across reboots. Rename and delete from the UI.
 - **Activity log:** Real-time scrollable log of IR receives and sends. Incoming signals are color-coded: green for known stored commands, amber for likely matches, grey for unknown.
-- **Bluetooth (BLE):** A bonded computer or phone can send stored IR commands over BLE without using WiFi. Passkey-protected pairing with automatic reconnection. See [docs/bluetooth.md](docs/bluetooth.md).
+- **Bluetooth (BLE):** An authorized computer or phone can send stored IR commands over an encrypted, non-bonded BLE session without using WiFi. See [docs/bluetooth.md](docs/bluetooth.md).
 - **Mobile-first UI:** Responsive layout optimized for phones (stored commands first, large buttons) with two-column grid on desktop. Frontend served from **LittleFS** as static HTML/CSS/JS; see [docs/web-interface.md](docs/web-interface.md).
 
 ## Web interface preview
@@ -23,13 +23,16 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
    ![Wiring Diagram](docs/assets/wiring-breadboard.svg)
 
 2. **WiFi / build options**  
-   Copy `.env.example` to `.env` and set `WIFI_SSID` / `WIFI_PASS` (used for local config). Firmware WiFi still comes from `src/secrets.h` (copy from `src/secrets.h.example`).
+   Copy `.env.example` to `.env` and set `WIFI_SSID` / `WIFI_PASS`. Those values are compiled into the firmware at build time (`scripts/pio_env_flags.py`). Copy `src/secrets.h.example` to `src/secrets.h` only if you need BLE passkey options.
 
    Set the name advertised over Bluetooth:
    ```bash
    BLE_DEVICE_NAME=IR Blaster
+   BLE_AUTH_TOKEN=replace_with_a_random_token
    ```
-   This value is required at build time.
+   Both values are required at build time. Generate the token with
+   `openssl rand -hex 24`. Push the same name and token to the Mac client on
+   this machine with `make sync-mac-client` (or `python3 scripts/sync_mac_client.py`).
 
    For **transmit-only** boards (no IR receiver), set in `.env`:
    ```bash
@@ -43,11 +46,7 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
    ```
    Default is `1` (range 1–20). Used for saved-code Send (UI/BLE) and as the default when HTTP/WS omit `repeat`.
 
-   For **BLE-only** operation (no web UI or HTTP API), set:
-   ```bash
-   WIFI_ENABLED=0
-   ```
-   This powers the WiFi radio down and skips the HTTP server. Worth doing when the device has no reachable network: WiFi and BLE share one 2.4 GHz radio, and the WiFi stack retries association indefinitely, which destabilises the BLE link. Default is `1`.
+   For **BLE-only** operation (no web UI or HTTP API), leave `WIFI_SSID` and `WIFI_PASS` empty (or omit them). That powers the WiFi radio down and skips the HTTP server. Worth doing when the device has no reachable network: WiFi and BLE share one 2.4 GHz radio, and the WiFi stack retries association indefinitely, which destabilises the BLE link.
 
 3. **Build and install** (firmware + frontend)
    ```bash
@@ -75,7 +74,7 @@ WiFi-connected IR receiver and transmitter for ESP32-C3. Capture IR codes from r
 ## Project layout
 
 - **`src/main.cpp`** -- Firmware: WiFi, LittleFS, AsyncWebServer + WebSocket, IR recv/send, NVS stored codes, BLE integration, template processor.
-- **`src/ble_server.cpp`** / **`include/ble_server.h`** -- BLE GATT server (NimBLE): service, characteristics, bonding, advertising.
+- **`src/ble_server.cpp`** / **`include/ble_server.h`** -- BLE GATT server: encrypted sessions, token authorization, characteristics, and advertising.
 - **`data/`** -- Frontend files served from LittleFS: `index.html`, `app.css`, `app.js`.
 - **`src/ir_utils.cpp`** / **`include/ir_utils.h`** -- Pure helper functions (URL builders) shared by firmware and unit tests.
 - **`test/test_ir_utils.cpp`** -- Unity unit tests for the helpers (run on device).
@@ -131,11 +130,12 @@ Tests cover: `GET /`, `/ip`, `/last`, `/send`, `/saved`, `/dump`, `POST /save` (
 
 ### Integration tests (BLE)
 
-A pytest + bleak suite in `test/integration/test_ble.py` connects to the device over BLE. Requires the device to be running and already paired/bonded with the host Mac.
+A pytest + bleak suite in `test/integration/test_ble.py` connects to the device over BLE. Requires the device to be running and the shared token.
 
 ```bash
 pip install -r requirements-test.txt
-DEVICE_BLE_NAME="IR Blaster" pytest test/integration/test_ble.py -v
+DEVICE_BLE_NAME="IR Blaster" DEVICE_BLE_AUTH_TOKEN="<token>" \
+  pytest test/integration/test_ble.py -v
 ```
 
 Tests cover: BLE discovery, reading saved codes, sending a stored command by index, invalid index handling, and status notifications.

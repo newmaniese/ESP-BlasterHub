@@ -883,9 +883,8 @@ void setupWifi() {
   // network keeps the WiFi stack retrying association forever, which competes
   // with BLE, so power the radio down instead of leaving it half-configured.
   WiFi.mode(WIFI_OFF);
-  printf("[IR] WiFi disabled (WIFI_ENABLED=0) — BLE only\n");
-  return;
-#endif
+  printf("[IR] WiFi disabled (no WIFI_SSID/WIFI_PASS) — BLE only\n");
+#else
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   printf("[IR] Connecting to Wi-Fi\n");
@@ -893,7 +892,12 @@ void setupWifi() {
   const uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - start >= timeoutMs) {
-      printf("[IR] WiFi timeout – check SSID/password. Continuing without network.\n");
+      // Do not leave STA auto-retrying on the radio after startup. Continuous
+      // association attempts contend with BLE and make reconnect unreliable.
+      WiFi.setAutoReconnect(false);
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      printf("[IR] WiFi timeout – radio disabled; continuing BLE-only.\n");
       return;
     }
     delay(500);
@@ -906,6 +910,7 @@ void setupWifi() {
     printf("  (%u s until %s)", (unsigned)sec, cmd);
   }
   printf("\n");
+#endif
 }
 
 void setupStorage() {
@@ -933,8 +938,13 @@ void setupIR() {
 
 void setupWebserver() {
 #if !WIFI_ENABLED
-  printf("[IR] HTTP server skipped (WIFI_ENABLED=0)\n");
+  printf("[IR] HTTP server skipped (no WIFI_SSID/WIFI_PASS)\n");
   return;
+#else
+  if (WiFi.status() != WL_CONNECTED) {
+    printf("[IR] HTTP server skipped (WiFi unavailable)\n");
+    return;
+  }
 #endif
   server.on("/", HTTP_GET, handleRoot);
   // Serve static assets from LittleFS (app.css, app.js, etc.)
@@ -971,10 +981,10 @@ void setup() {
   printf("[IR] --- ESP32-C3 IR Blaster boot ---\n");
 
   setupStorage();
-  setupWifi();
   setupIR();
-  setupWebserver();
   setupBLE();
+  setupWifi();
+  setupWebserver();
 }
 
 void handleHeartbeat() {

@@ -2,7 +2,8 @@
 //
 // Uses the Arduino-ESP32 built-in BLE library (Bluedroid stack).
 //
-// Exposes four characteristics behind bonded encryption:
+// Exposes five characteristics behind per-connection encryption:
+//   - Authenticate (Read/Write) — shared-token session authorization
 //   - Saved Codes  (Read)   — JSON array of stored IR commands
 //   - Send Command (Write)  — write a single byte (NVS index) to send that code
 //   - Status  (Read/Notify) — notifies the result string after a send
@@ -10,7 +11,9 @@
 //                             the reconnect-countdown snapshot JSON
 //   - Schedule     (Write)  — configure the disconnect delay; heartbeat
 //
-// Security: bonding + MITM + Secure Connections, passkey displayed on Serial.
+// Security: non-bonded LE Secure Connections plus an application token. Avoiding
+// persistent bond keys prevents macOS and the ESP32 from deadlocking when one
+// side loses its copy. Passkey mode adds MITM protection but prompts each session.
 // Auto-reconnect: advertising restarts on disconnect so the client reconnects.
 //
 // Half-open links: if the stack reports "connected" but no GATT traffic arrives
@@ -52,7 +55,9 @@ static BLECharacteristic* pSavedChar   = nullptr;
 static BLECharacteristic* pSendChar    = nullptr;
 static BLECharacteristic* pStatusChar  = nullptr;
 static BLECharacteristic* pScheduleChar = nullptr;
+static BLECharacteristic* pAuthChar    = nullptr;
 static volatile bool      deviceConnected = false;
+static volatile bool      sessionAuthorized = false;
 
 // Disconnect-delayed command: configure while connected; countdown starts on disconnect.
 static char     scheduledCommandName[BLE_SCHEDULE_CMD_NAME_MAX] = "";
@@ -163,6 +168,28 @@ static void noteGattActivity() {
   lastGattActivityMs = millis();
 }
 
+static void setStatus(const String& msg);
+
+static bool tokenMatches(const std::string& candidate) {
+  const char* expected = BLE_AUTH_TOKEN;
+  const size_t expectedLen = strlen(expected);
+  if (candidate.size() != expectedLen) return false;
+
+  uint8_t difference = 0;
+  for (size_t i = 0; i < expectedLen; ++i) {
+    difference |= static_cast<uint8_t>(candidate[i]) ^
+                  static_cast<uint8_t>(expected[i]);
+  }
+  return difference == 0;
+}
+
+static bool requireAuthorized(const char* operation) {
+  if (sessionAuthorized) return true;
+  printf("[BLE] Rejected unauthenticated %s\n", operation);
+  setStatus("ERR:unauthorized");
+  return false;
+}
+
 // Helper: set Status characteristic and notify if connected.
 static void setStatus(const String& msg) {
   pStatusChar->setValue(msg.c_str());
@@ -188,6 +215,7 @@ static void handleLinkLost(const char* reason, bool forceDisconnect,
   }
 
   deviceConnected = false;
+  sessionAuthorized = false;
 
   bool countdownStarted = false;
   uint32_t delaySec = 0;
@@ -230,6 +258,10 @@ static void handleLinkLost(const char* reason, bool forceDisconnect,
 class IRServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
+    sessionAuthorized = false;
+    if (pAuthChar != nullptr) {
+      pAuthChar->setValue("AUTH_REQUIRED");
+    }
     currentConnId = pServer->getConnId();
     connectionEpoch++;
     noteGattActivity();
@@ -243,10 +275,9 @@ class IRServerCallbacks : public BLEServerCallbacks {
         snapshot = reconnectSnapshotJsonLocked();
       }
     }
-    // Parked in Status rather than exposed as a Schedule read: macOS caches the
-    // GATT table of a bonded peripheral, so a newly readable characteristic
-    // stays invisible until the bond is removed. Published without notifying —
-    // the client reads Status once on connect, before any command result lands.
+    // Park the reconnect snapshot in Status before any command result can
+    // overwrite it. Publish without notifying; the client reads it once after
+    // authorizing the connection.
     if (snapshot.length() > 0) {
       pStatusChar->setValue(snapshot.c_str());
     }
@@ -287,7 +318,7 @@ class IRSecurityCallbacks : public BLESecurityCallbacks {
 
   void onAuthenticationComplete(esp_ble_auth_cmpl_t auth_cmpl) override {
     if (auth_cmpl.success) {
-      printf("[BLE] Authentication complete — bonded\n");
+      printf("[BLE] Secure connection established (non-bonded)\n");
     } else {
       printf("[BLE] Authentication FAILED (reason=%d)\n", auth_cmpl.fail_reason);
     }
@@ -307,10 +338,30 @@ class IRSecurityCallbacks : public BLESecurityCallbacks {
 // Characteristic callbacks
 // ---------------------------------------------------------------------------
 
+class AuthCallbacks : public BLECharacteristicCallbacks {
+  void onRead(BLECharacteristic* pCharacteristic) override {
+    noteGattActivity();
+    pCharacteristic->setValue(sessionAuthorized ? "OK" : "AUTH_REQUIRED");
+  }
+
+  void onWrite(BLECharacteristic* pCharacteristic) override {
+    noteGattActivity();
+    const std::string value = pCharacteristic->getValue();
+    sessionAuthorized = tokenMatches(value);
+    pCharacteristic->setValue(sessionAuthorized ? "OK" : "ERR");
+    printf("[BLE] Session authorization %s\n",
+           sessionAuthorized ? "accepted" : "rejected");
+  }
+};
+
 // Saved Codes — compact JSON (index + name) to stay under 600-byte BLE limit.
 class SavedCodesCallbacks : public BLECharacteristicCallbacks {
   void onRead(BLECharacteristic* pCharacteristic) override {
     noteGattActivity();
+    if (!requireAuthorized("Saved Codes read")) {
+      pCharacteristic->setValue("ERR:unauthorized");
+      return;
+    }
     String json = getSavedCodesJsonCompact();
     pCharacteristic->setValue(json.c_str());
     printf("[BLE] Saved codes read (%u bytes)\n", (unsigned)json.length());
@@ -321,6 +372,7 @@ class SavedCodesCallbacks : public BLECharacteristicCallbacks {
 class SendCommandCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pCharacteristic) override {
     noteGattActivity();
+    if (!requireAuthorized("Send Command write")) return;
     std::string val = pCharacteristic->getValue();
     if (val.size() < 1) {
       setStatus("ERR:empty write");
@@ -349,6 +401,7 @@ class ScheduleCallbacks : public BLECharacteristicCallbacks {
 public:
   void onWrite(BLECharacteristic* pCharacteristic) override {
     noteGattActivity();
+    if (!requireAuthorized("Schedule write")) return;
     std::string val = pCharacteristic->getValue();
     if (val.size() == 0) {
       setStatus("ERR:schedule empty");
@@ -436,6 +489,7 @@ private:
 // ---------------------------------------------------------------------------
 static IRServerCallbacks    serverCb;
 static IRSecurityCallbacks  securityCb;
+static AuthCallbacks        authCb;
 static SavedCodesCallbacks  savedCodesCb;
 static SendCommandCallbacks sendCommandCb;
 static ScheduleCallbacks    scheduleCb;
@@ -445,12 +499,13 @@ static ScheduleCallbacks    scheduleCb;
 // ---------------------------------------------------------------------------
 
 static void setupBLESecurity() {
-  // Security: bonding + encryption. Just Works (no passkey) or passkey entry when BLE_USE_PASSKEY.
+  // Encrypt every connection, but never persist an SMP bond. Authorization is
+  // provided by BLE_AUTH_TOKEN after encryption succeeds.
   BLEDevice::setEncryptionLevel(BLE_USE_PASSKEY ? ESP_BLE_SEC_ENCRYPT_MITM : ESP_BLE_SEC_ENCRYPT);
   BLEDevice::setSecurityCallbacks(&securityCb);
 
   BLESecurity *pSecurity = new BLESecurity();
-  pSecurity->setAuthenticationMode(BLE_USE_PASSKEY ? ESP_LE_AUTH_REQ_SC_MITM_BOND : ESP_LE_AUTH_REQ_SC_BOND);
+  pSecurity->setAuthenticationMode(BLE_USE_PASSKEY ? ESP_LE_AUTH_REQ_SC_MITM : ESP_LE_AUTH_REQ_SC_ONLY);
   pSecurity->setCapability(BLE_USE_PASSKEY ? ESP_IO_CAP_OUT : ESP_IO_CAP_NONE);  // OUT = display passkey; NONE = Just Works
 #if BLE_USE_PASSKEY
   pSecurity->setStaticPIN(BLE_PASSKEY);
@@ -463,6 +518,15 @@ static void setupBLECharacteristics(BLEService* pService) {
   // Characteristic permissions: ENC_MITM when passkey used, ENC only for Just Works (no MITM).
   const uint32_t perm_read  = BLE_USE_PASSKEY ? ESP_GATT_PERM_READ_ENC_MITM  : ESP_GATT_PERM_READ_ENCRYPTED;
   const uint32_t perm_write = BLE_USE_PASSKEY ? ESP_GATT_PERM_WRITE_ENC_MITM : ESP_GATT_PERM_WRITE_ENCRYPTED;
+
+  // Authenticate (Read + Write). The client writes the shared token once after
+  // each connection and reads back OK before accessing any other characteristic.
+  pAuthChar = pService->createCharacteristic(
+      BLE_CHAR_AUTH_UUID,
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  pAuthChar->setAccessPermissions(perm_read | perm_write);
+  pAuthChar->setCallbacks(&authCb);
+  pAuthChar->setValue("AUTH_REQUIRED");
 
   // Saved Codes (Read)
   pSavedChar = pService->createCharacteristic(
@@ -499,7 +563,7 @@ static void setupBLEAdvertising() {
   pAdvertising->addServiceUUID(BLE_IR_SERVICE_UUID);
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);  // helps with iPhone connectivity
-  pAdvertising->setMinPreferred(0x12);
+  pAdvertising->setMaxPreferred(0x12);
   BLEDevice::startAdvertising();
 
   printf("[BLE] Advertising started as \"%s\"\n", BLE_DEVICE_NAME);

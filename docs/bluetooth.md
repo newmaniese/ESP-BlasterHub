@@ -1,6 +1,6 @@
 # ESP32-C3 IR Blaster -- Bluetooth Low Energy (BLE)
 
-The IR Blaster exposes a BLE GATT service that lets a paired computer (or phone) send stored IR commands without using the WiFi/HTTP interface. Only **stored commands** can be triggered over BLE; receiving, saving, and managing codes is still done through the [web interface](web-interface.md).
+The IR Blaster exposes a BLE GATT service that lets an authorized computer (or phone) send stored IR commands without using the WiFi/HTTP interface. Only **stored commands** can be triggered over BLE; receiving, saving, and managing codes is still done through the [web interface](web-interface.md).
 
 ---
 
@@ -8,8 +8,8 @@ The IR Blaster exposes a BLE GATT service that lets a paired computer (or phone)
 
 - **Transport:** Bluetooth Low Energy 5.0 (ESP32-C3 supports BLE only, not Classic Bluetooth).
 - **Library:** Built-in Arduino-ESP32 BLE (Bluedroid stack). The `huge_app.csv` partition scheme provides enough flash for BLE + WiFi + IRremote.
-- **Security:** Bonding + encryption (LE Secure Connections). By default pairing is **Just Works** (no passkey). You can enable passkey entry in [`src/secrets.h`](../src/secrets.h.example) by setting `BLE_USE_PASSKEY` to `1` and defining a `BLE_PASSKEY`.
-- **Reconnection:** The ESP32 restarts advertising after any disconnect, so a bonded client reconnects automatically when back in range. A half-open link (no GATT traffic while still "connected") is force-dropped after an idle timeout so it cannot wedge the device.
+- **Security:** Non-bonded LE Secure Connections plus a 16–64 character application token. Avoiding persistent SMP keys prevents stale Mac/ESP32 bonds from blocking reconnects.
+- **Reconnection:** The ESP32 restarts advertising after any disconnect. Each connection is encrypted and authorized again, with no stored bond to become inconsistent.
 
 BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue to work normally.
 
@@ -20,12 +20,13 @@ BLE and WiFi run simultaneously -- the HTTP API, WebSocket, and web UI continue 
 | Characteristic | UUID | Properties | Payload | Description |
 |---|---|---|---|---|
 | **IR Control Service** | `e97a0001-c116-4a63-a60f-0e9b4d3648f3` | -- | -- | Service container |
+| Authenticate | `e97a0006-c116-4a63-a60f-0e9b4d3648f3` | Read + Write (encrypted) | UTF-8 token / `OK` | Authorize this connection before using other characteristics |
 | Saved Codes | `e97a0002-c116-4a63-a60f-0e9b4d3648f3` | Read (encrypted) | JSON array | Full list of stored IR codes, same shape as `GET /saved` |
 | Send Command | `e97a0003-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | 1 byte: NVS index | Write the index of a saved code to transmit it |
 | Status | `e97a0004-c116-4a63-a60f-0e9b4d3648f3` | Read + Notify (encrypted) | UTF-8 string | Notifies the result after a send: `OK:<name>` or `ERR:<reason>`. On connect its value is the reconnect countdown snapshot (JSON, see below) |
 | Schedule | `e97a0005-c116-4a63-a60f-0e9b4d3648f3` | Write (encrypted) | JSON (see below) | Configure the disconnect-delayed command, or send a keepalive |
 
-All characteristics require an **encrypted and authenticated** connection (bonding must be completed before any access).
+All characteristics require encryption. After connecting, write `BLE_AUTH_TOKEN` to Authenticate and read back `OK`. Every other operation is rejected until that succeeds.
 
 ### Saved Codes payload
 
@@ -93,11 +94,8 @@ It is the source of truth for clients deciding whether a reconnect should replay
 startup commands. **Read it before the first send of the connection:** Status
 also carries command results, so a send replaces the snapshot with `OK:<name>`.
 
-The snapshot rides on Status rather than a readable Schedule characteristic
-because macOS caches the GATT table of a bonded peripheral. Adding a `Read`
-property to an existing characteristic stays invisible to an already-paired Mac
-— CoreBluetooth rejects the read locally with "Read Not Permitted" and never
-puts a request on air — until the bond is removed and the device re-paired.
+The snapshot rides on Status for protocol compatibility and must be read before
+the first command result overwrites it.
 
 ### Schedule payload
 
@@ -131,7 +129,9 @@ sequenceDiagram
     participant BLE as ESP32 BLE
     participant IR as IR LED
 
-    Mac->>BLE: Connect (auto-reconnect if bonded)
+    Mac->>BLE: Connect and establish ephemeral encryption
+    Mac->>BLE: Write shared token to Authenticate
+    BLE-->>Mac: OK
     Mac->>BLE: Read "Saved Codes"
     BLE-->>Mac: JSON array of stored commands
 
@@ -143,33 +143,27 @@ sequenceDiagram
 
 ---
 
-## Pairing and bonding
+## Encryption and authorization
 
-### First-time pairing
+Set `BLE_AUTH_TOKEN` in firmware `.env` to a random 16–64 character value
+(`openssl rand -hex 24` is suitable). Clients must use the same value. On this
+Mac, `make sync-mac-client` copies `BLE_DEVICE_NAME` and `BLE_AUTH_TOKEN` from
+`.env` into the running Blaster Mac Client (or its installed `config.yaml`).
 
-1. Set `BLE_DEVICE_NAME` in `.env`, build the firmware, and power on the ESP32. It begins advertising with that name.
-2. On your Mac (or phone), scan for BLE devices. You will see the configured name with the service UUID `e97a0001-…`.
-3. Connect. With the default **Just Works** mode (`BLE_USE_PASSKEY` = 0), no passkey is required — pairing completes automatically and the link is encrypted and bonded.
-4. If you have enabled passkey mode (`BLE_USE_PASSKEY` = 1 in `src/secrets.h`), the ESP32 displays a 6-digit passkey on the serial monitor; enter it in the pairing dialog on your Mac/phone.
-5. Once paired, the bond keys are stored in NVS on both devices.
+The default Just Works exchange creates encrypted session keys but does not bond,
+so keys are discarded at disconnect. `BLE_USE_PASSKEY=1` adds MITM protection
+but requires passkey entry on every connection.
 
-### Subsequent connections
-
-After bonding, the client reconnects automatically -- no passkey is needed again. Bond keys persist across reboots on both the ESP32 (NVS) and macOS (system keychain).
-
-### Clearing bonds
-
-To remove all stored bonds and force re-pairing:
-
-- **ESP32:** erase NVS with `esptool.py --port /dev/cu.usbmodem* erase_flash`, then re-flash.
-- **Mac:** remove the device from System Settings > Bluetooth.
+When migrating from older bonded firmware, forget the device once in **System
+Settings → Bluetooth** before connecting to the new firmware. No further bond
+maintenance is needed.
 
 ---
 
 ## Auto-reconnect behavior
 
 - **ESP32 side:** The `onDisconnect` callback — and the [half-open link watchdog](#half-open-link-watchdog) — restart BLE advertising immediately, so the device is always connectable after either a real or a half-open link loss.
-- **macOS side:** CoreBluetooth's `connectPeripheral:options:` queues a reconnection request. When the ESP32 comes back in range and starts advertising, macOS reconnects automatically. The app does not need to scan again.
+- **macOS side:** The client retains the discovered CoreBluetooth peripheral and reconnects directly. It only scans again after repeated failures.
 
 This means: if you walk away from the ESP32 with your laptop and come back, the connection resumes without user action.
 
@@ -218,13 +212,15 @@ pip install -r requirements-test.txt
 
 ```bash
 # By device name (default: "IR Blaster")
-DEVICE_BLE_NAME="IR Blaster" pytest test/integration/test_ble.py -v
+DEVICE_BLE_NAME="IR Blaster" DEVICE_BLE_AUTH_TOKEN="<token>" \
+  pytest test/integration/test_ble.py -v
 
 # By device address
-DEVICE_BLE_ADDR="AA:BB:CC:DD:EE:FF" pytest test/integration/test_ble.py -v
+DEVICE_BLE_ADDR="AA:BB:CC:DD:EE:FF" DEVICE_BLE_AUTH_TOKEN="<token>" \
+  pytest test/integration/test_ble.py -v
 ```
 
-The device must be powered on, advertising, and already bonded with the Mac running the tests. Tests cover:
+The device must be powered on, advertising, and configured with the supplied token. Tests cover:
 
 - **Discovery** — device found, service UUID advertised.
 - **Saved Codes** — read returns valid JSON array with expected keys.

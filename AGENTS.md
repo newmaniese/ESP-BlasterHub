@@ -9,7 +9,7 @@ ESP32-C3 IR Blaster firmware and web UI:
 - Serves a LittleFS-hosted frontend over WiFi.
 - Stores saved IR codes in NVS across reboots.
 - Supports HTTP API and WebSocket live updates.
-- BLE GATT server for sending stored commands from a bonded computer (NimBLE).
+- Token-authorized, encrypted non-bonded BLE GATT server for stored commands.
 
 ## Stack and dependencies
 
@@ -47,7 +47,9 @@ Equivalent PlatformIO: `pio run --target upload`, then `buildfs`, then `uploadfs
 
 Transmit-only (no IR receiver): set `IR_RECV_ENABLED=0` in `.env` before building (`scripts/pio_env_flags.py` passes `-DIR_RECV_ENABLED=…`).
 Default IR burst count: `IR_SEND_REPEAT` in `.env` (1–20; default 1).
-BLE-only (WiFi radio off, no HTTP server): set `WIFI_ENABLED=0` in `.env`. Use when no configured network is reachable — WiFi association retries share the radio with BLE and destabilise the link.
+BLE-only (WiFi radio off, no HTTP server): leave `WIFI_SSID` / `WIFI_PASS` empty (or omit them) in `.env`. Use when no configured network is reachable — WiFi association retries share the radio with BLE and destabilise the link.
+
+Copy `.env` BLE name/token to the local Mac client: `make sync-mac-client`.
 
 ## Testing
 
@@ -64,10 +66,11 @@ pip install -r requirements-test.txt
 DEVICE_IP=http://<device-ip> pytest test/integration/test_api.py
 ```
 
-BLE integration tests (device must be paired/bonded):
+BLE integration tests (device and shared token required):
 
 ```bash
-DEVICE_BLE_NAME="IR Blaster" pytest test/integration/test_ble.py
+DEVICE_BLE_NAME="IR Blaster" DEVICE_BLE_AUTH_TOKEN="<token>" \
+  pytest test/integration/test_ble.py
 ```
 
 ## Documentation index

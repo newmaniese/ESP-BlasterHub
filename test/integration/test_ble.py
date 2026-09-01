@@ -1,8 +1,8 @@
 """
 Integration tests for the ESP32-C3 IR Blaster BLE GATT service.
 
-These tests connect to a real device over BLE.  The device must be powered on,
-advertising, and already paired/bonded with this Mac.
+These tests connect to a real device over BLE. The device must be powered on,
+advertising, and use the token supplied through DEVICE_BLE_AUTH_TOKEN.
 
 Set the device address or name before running:
 
@@ -32,9 +32,11 @@ CHAR_SAVED_UUID   = "e97a0002-c116-4a63-a60f-0e9b4d3648f3"
 CHAR_SEND_UUID    = "e97a0003-c116-4a63-a60f-0e9b4d3648f3"
 CHAR_STATUS_UUID  = "e97a0004-c116-4a63-a60f-0e9b4d3648f3"
 CHAR_SCHEDULE_UUID = "e97a0005-c116-4a63-a60f-0e9b4d3648f3"
+CHAR_AUTH_UUID     = "e97a0006-c116-4a63-a60f-0e9b4d3648f3"
 
 DEVICE_BLE_NAME = os.environ.get("DEVICE_BLE_NAME", "IR Blaster")
 DEVICE_BLE_ADDR = os.environ.get("DEVICE_BLE_ADDR", "")
+DEVICE_BLE_AUTH_TOKEN = os.environ.get("DEVICE_BLE_AUTH_TOKEN", "")
 
 SCAN_TIMEOUT = 10.0   # seconds
 
@@ -75,7 +77,16 @@ async def ble_device(event_loop):
 @pytest_asyncio.fixture
 async def client(ble_device):
     """Connect to the BLE device for a single test, then disconnect."""
+    if not DEVICE_BLE_AUTH_TOKEN:
+        pytest.skip("DEVICE_BLE_AUTH_TOKEN is required")
     async with BleakClient(ble_device, timeout=15.0) as c:
+        await c.write_gatt_char(
+            CHAR_AUTH_UUID,
+            DEVICE_BLE_AUTH_TOKEN.encode("utf-8"),
+            response=True,
+        )
+        auth = bytes(await c.read_gatt_char(CHAR_AUTH_UUID))
+        assert auth == b"OK", "BLE auth token was rejected"
         yield c
 
 

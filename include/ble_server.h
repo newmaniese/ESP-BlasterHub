@@ -7,6 +7,7 @@
 #define BLE_CHAR_SEND_UUID       "e97a0003-c116-4a63-a60f-0e9b4d3648f3"
 #define BLE_CHAR_STATUS_UUID     "e97a0004-c116-4a63-a60f-0e9b4d3648f3"
 #define BLE_CHAR_SCHEDULE_UUID   "e97a0005-c116-4a63-a60f-0e9b4d3648f3"
+#define BLE_CHAR_AUTH_UUID       "e97a0006-c116-4a63-a60f-0e9b4d3648f3"
 
 #include "secrets.h"
 
@@ -18,6 +19,10 @@
 // To require a passkey, #define BLE_USE_PASSKEY 1 in src/secrets.h.
 #ifndef BLE_USE_PASSKEY
 #define BLE_USE_PASSKEY           0
+#endif
+
+#ifndef BLE_AUTH_TOKEN
+#error "BLE_AUTH_TOKEN must be supplied by scripts/pio_env_flags.py from .env"
 #endif
 
 #define BLE_SCHEDULE_CMD_NAME_MAX 32   // max length of scheduled command name
